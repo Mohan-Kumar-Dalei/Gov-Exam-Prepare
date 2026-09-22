@@ -1,0 +1,45 @@
+# Render blueprint: one web service serving the API and the built frontend.
+#
+# Both halves run in a single process so the browser talks to one origin —
+# no CORS, and no separate VITE_API_URL to keep in sync.
+#
+# MongoDB is not part of this: Render does not host it, so MONGO_URI must point
+# at a MongoDB Atlas cluster (the free M0 tier is enough to start).
+services:
+  - type: web
+    name: gov-exam-prepare
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+
+      # Set these in the Render dashboard — never commit them.
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # Optional; these match the in-app defaults.
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_FALLBACK_MODELS
+        value: gemini-3.8-flash,gemini-3.7-flash,gemini-3-flash-preview,gemini-3.5-flash
+      - key: GEMINI_THINKING_LEVEL
+        value: low
+      - key: GEMINI_GROUNDING
+        value: "true"
+      - key: MIN_FACTUAL_CONFIDENCE
+        value: "70"
+      - key: MAX_UPLOAD_MB
+        value: "20"
