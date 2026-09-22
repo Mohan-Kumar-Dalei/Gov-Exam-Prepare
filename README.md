@@ -79,7 +79,7 @@ After the first deploy, sign up — **the first account becomes the admin** and 
 
 `POST /api/documents/upload` accepts the file, returns **202 Accepted** with a `documentId`, and runs the chain in the background. The client polls `GET /api/documents/:id/status` until `completed` or `failed`. This is not optional polish: under upstream load, Gemini retries and model fallbacks can push a scanned PDF past any browser timeout, and a dropped connection would otherwise lose the work.
 
-1. **Multer** stores the PDF (20MB cap, PDF-only filter).
+1. **Multer** stores the upload (20MB cap). A `.txt` or `.md` file is accepted as well as a PDF — if you already have the notification as text, that is the best input there is: nothing is transcribed and no page images reach the model.
 2. **pdf-parse** extracts the text layer.
 3. If there is none — a scanned notification — the PDF is **transcribed to text once**, by Gemini, with tables preserved as markdown. That transcript is stored immediately.
 4. Everything after this point reads text, never page images: both analysis passes, and any later re-analysis. Direct vision remains only as a fallback if transcription produces nothing usable.

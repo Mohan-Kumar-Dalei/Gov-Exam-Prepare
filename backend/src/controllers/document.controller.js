@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const path = require('node:path');
 const { createHash } = require('node:crypto');
 const asyncHandler = require('../utils/asyncHandler.js');
 const ApiError = require('../utils/ApiError.js');
@@ -20,9 +21,28 @@ const logger = require('../utils/logger.js');
  * not lose the work. Roadmap generation is best-effort — failing there must not
  * discard a successful analysis.
  */
+const TEXT_EXTENSIONS = ['.txt', '.md'];
+const isTextUpload = (name = '') => TEXT_EXTENSIONS.includes(path.extname(name).toLowerCase());
+
 async function runPipeline(doc, user) {
   try {
-    const { text, pageCount, charCount, needsVision, buffer } = await parsePdf(doc.path);
+    let text = '';
+    let pageCount = 0;
+    let needsVision = false;
+    let buffer = null;
+
+    if (isTextUpload(doc.originalName)) {
+      // Already text: straight to analysis, no parsing and no vision at all.
+      text = (await fs.readFile(doc.path, 'utf8')).trim();
+      if (text.length < 200) {
+        throw ApiError.unprocessable('That text file is too short to be a recruitment notification.');
+      }
+      logger.info(`Using ${text.length} chars of uploaded text from ${doc.originalName}`);
+    } else {
+      ({ text, pageCount, needsVision, buffer } = await parsePdf(doc.path));
+    }
+
+    const charCount = text.length;
 
     doc.extractedText = text;
     doc.pageCount = pageCount;

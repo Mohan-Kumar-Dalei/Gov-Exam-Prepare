@@ -53,12 +53,15 @@ export default function Upload() {
 
   const pickFile = useCallback((f) => {
     if (!f) return;
-    if (f.type !== 'application/pdf') {
-      toast.error('Only PDF files are accepted.');
+
+    // The extension decides: browsers report .txt inconsistently.
+    const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+    if (!['.pdf', '.txt', '.md'].includes(ext)) {
+      toast.error('Upload a PDF, or a .txt file of the notification text.');
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
-      toast.error('That PDF is larger than 20MB.');
+      toast.error('That file is larger than 20MB.');
       return;
     }
     setFile(f);
@@ -174,7 +177,7 @@ export default function Upload() {
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="application/pdf"
+                  accept=".pdf,.txt,.md,application/pdf,text/plain"
                   className="hidden"
                   onChange={(e) => pickFile(e.target.files?.[0])}
                 />
@@ -182,14 +185,24 @@ export default function Upload() {
                   <FileUp size={24} />
                 </span>
                 <p className="mt-4 text-sm font-semibold text-ink-900">
-                  {file ? file.name : 'Drop your PDF here, or click to browse'}
+                  {file ? file.name : 'Drop your PDF or .txt here, or click to browse'}
                 </p>
                 <p className="mt-1 text-xs text-ink-500">
                   {file
                     ? `${(file.size / 1024 / 1024).toFixed(2)} MB · ready to analyse`
-                    : 'PDF up to 20MB. Scanned documents work too — the AI reads the pages.'}
+                    : 'PDF or plain text, up to 20MB. Scanned PDFs work too.'}
                 </p>
               </div>
+
+              {!busy && !file ? (
+                <p className="mt-4 rounded-xl border border-ink-200 bg-ink-50 p-3 text-xs leading-relaxed text-ink-600">
+                  <strong className="text-ink-900">Scanned PDF?</strong> It works, but the AI has to
+                  read the pages as images first, which is slower and occasionally misses the
+                  syllabus table. If you already have the notification as text — from any PDF-to-text
+                  converter — upload that <code className="rounded bg-white px-1">.txt</code> instead.
+                  Nothing gets transcribed and no page images are sent.
+                </p>
+              ) : null}
 
               {busy ? (
                 <div className="mt-5 rounded-xl border border-brand-200 bg-brand-50/60 p-4">

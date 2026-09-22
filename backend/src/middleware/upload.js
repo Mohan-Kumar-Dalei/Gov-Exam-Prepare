@@ -17,14 +17,34 @@ const storage = multer.diskStorage({
       .basename(file.originalname, path.extname(file.originalname))
       .replace(/[^a-zA-Z0-9-_]/g, '_')
       .slice(0, 40);
-    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${safeBase}.pdf`);
+    const ext = path.extname(file.originalname).toLowerCase() || '.pdf';
+    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${safeBase}${ext}`);
   },
 });
 
+/**
+ * Plain text is accepted as well as PDF.
+ *
+ * A notification the user has already converted to text elsewhere is the best
+ * possible input: nothing has to be transcribed, no page images reach the
+ * model, and their converter's output is usually cleaner than anything we
+ * would produce ourselves.
+ */
+const ACCEPTED = {
+  '.pdf': ['application/pdf'],
+  '.txt': ['text/plain', 'application/octet-stream'],
+  '.md': ['text/markdown', 'text/plain', 'application/octet-stream'],
+};
+
 const fileFilter = (_req, file, cb) => {
-  const isPdf =
-    file.mimetype === 'application/pdf' && path.extname(file.originalname).toLowerCase() === '.pdf';
-  if (!isPdf) return cb(ApiError.badRequest('Only PDF files are accepted.'));
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedTypes = ACCEPTED[ext];
+
+  if (!allowedTypes) {
+    return cb(ApiError.badRequest('Upload a PDF, or a .txt file of the notification text.'));
+  }
+  // Browsers are inconsistent about the type they report for .txt, so the
+  // extension decides and the mime type is only a sanity check.
   return cb(null, true);
 };
 
