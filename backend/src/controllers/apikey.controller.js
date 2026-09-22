@@ -12,9 +12,10 @@ const listKeys = asyncHandler(async (_req, res) => {
 
   return ok(res, {
     keys,
-    // Surfaced so the UI can explain where a working key is coming from when
-    // the ring itself is empty.
+    // Surfaced so the UI can explain where a working key is coming from — and
+    // why AI is down when the env key is the only one and it is spent.
     envKeyPresent: Boolean(fromEnv),
+    envKey: keyring.envKeyState(),
     usableCount: (await keyring.getUsableKeys({ force: true })).length,
   });
 });
@@ -50,6 +51,12 @@ const updateKey = asyncHandler(async (req, res) => {
   if (!updated) throw ApiError.notFound('Key not found.');
 
   return ok(res, { key: updated.toClient() }, 'Key updated.');
+});
+
+/** POST /api/keys/env/revive — clear the environment key's in-memory park. */
+const reviveEnvKey = asyncHandler(async (_req, res) => {
+  keyring.reviveEnvKey();
+  return ok(res, { envKey: keyring.envKeyState() }, 'Environment key will be tried again.');
 });
 
 /** POST /api/keys/:id/revive — clear a parked status after topping up. */
@@ -113,4 +120,4 @@ const testKey = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { listKeys, addKey, updateKey, reviveKey, removeKey, testKey };
+module.exports = { listKeys, addKey, updateKey, reviveKey, reviveEnvKey, removeKey, testKey };

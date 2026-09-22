@@ -131,6 +131,7 @@ export const keyApi = {
   add: (body) => api.post('/keys', body),
   update: (id, body) => api.patch(`/keys/${id}`, body),
   revive: (id) => api.post(`/keys/${id}/revive`),
+  reviveEnv: () => api.post('/keys/env/revive'),
   test: (id) => api.post(`/keys/${id}/test`),
   remove: (id) => api.delete(`/keys/${id}`),
 };

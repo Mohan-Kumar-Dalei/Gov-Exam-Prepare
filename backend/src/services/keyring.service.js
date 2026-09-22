@@ -25,7 +25,18 @@ const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 const CACHE_MS = 5000;
 let cache = { at: 0, keys: [] };
 
+/**
+ * The environment key has no database row, so its health is parked in memory.
+ *
+ * Without this a spent env key is retried on every single request — each one
+ * paying a round trip to learn what the last one already discovered.
+ */
+const ENV_PARK_MS = { exhausted: 60 * 60 * 1000, invalid: 60 * 60 * 1000, rate_limited: RATE_LIMIT_COOLDOWN_MS };
+let envState = { status: 'untested', until: 0, lastError: '' };
+
 const envKey = () => (process.env.GEMINI_API_KEY || '').trim();
+
+const envKeyAvailable = () => Boolean(envKey()) && Date.now() >= envState.until;
 
 function invalidate() {
   cache = { at: 0, keys: [] };
@@ -65,8 +76,8 @@ async function getUsableKeys({ force = false } = {}) {
   }
 
   const fromEnv = envKey();
-  if (fromEnv && !usable.some((k) => k.key === fromEnv)) {
-    usable.push({ id: null, key: fromEnv, label: 'GEMINI_API_KEY (.env)' });
+  if (fromEnv && envKeyAvailable() && !usable.some((k) => k.key === fromEnv)) {
+    usable.push({ id: null, key: fromEnv, label: 'GEMINI_API_KEY (env)' });
   }
 
   cache = { at: now, keys: usable };
@@ -93,8 +104,12 @@ async function reportFailure(id, status, detail = '') {
   const verdict = classify(status, detail);
   if (!verdict.parks) return false;
   if (!id) {
-    // The env key cannot be parked in the database, but the caller still moves on.
-    logger.warn(`Environment API key reported ${verdict.status}`);
+    // No database row to park, so its health is held in memory instead.
+    const parkFor = ENV_PARK_MS[verdict.status] ?? RATE_LIMIT_COOLDOWN_MS;
+    envState = { status: verdict.status, until: Date.now() + parkFor, lastError: detail.slice(0, 300) };
+    logger.warn(
+      `Environment API key ${verdict.status}; skipping it for ${Math.round(parkFor / 60000)} min`,
+    );
     invalidate();
     return true;
   }
@@ -115,7 +130,10 @@ async function reportFailure(id, status, detail = '') {
 }
 
 async function reportSuccess(id) {
-  if (!id) return;
+  if (!id) {
+    envState = { status: 'ok', until: 0, lastError: '' };
+    return;
+  }
   await ApiKey.updateOne(
     { _id: id },
     { status: 'ok', lastError: '', cooldownUntil: null, lastUsedAt: new Date(), $inc: { successCount: 1 } },
@@ -171,8 +189,25 @@ async function readPlaintext(id) {
   return decrypt({ cipherText: row.cipherText, iv: row.iv, tag: row.tag });
 }
 
+/** The env key's live state, for the Settings page. */
+const envKeyState = () => ({
+  present: Boolean(envKey()),
+  status: envState.status,
+  available: envKeyAvailable(),
+  lastError: envState.lastError,
+  retryAt: envState.until ? new Date(envState.until) : null,
+});
+
+/** Clears the in-memory park, for the "revive" action. */
+const reviveEnvKey = () => {
+  envState = { status: 'untested', until: 0, lastError: '' };
+  invalidate();
+};
+
 module.exports = {
   getUsableKeys,
+  envKeyState,
+  reviveEnvKey,
   reportFailure,
   reportSuccess,
   classify,

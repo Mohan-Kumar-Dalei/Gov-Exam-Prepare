@@ -9,6 +9,9 @@ router.use(protect, restrictTo('admin'));
 
 router.get('/', ctrl.listKeys);
 router.post('/', ctrl.addKey);
+// Declared before the :id routes so 'env' is not mistaken for an id.
+router.post('/env/revive', ctrl.reviveEnvKey);
+
 router.patch('/:id', ctrl.updateKey);
 router.post('/:id/revive', ctrl.reviveKey);
 router.post('/:id/test', ctrl.testKey);

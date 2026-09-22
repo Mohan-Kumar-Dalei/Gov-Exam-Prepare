@@ -120,7 +120,7 @@ export default function Settings() {
   }
   if (ring.error) return <ErrorState error={ring.error} onRetry={ring.run} />;
 
-  const { keys = [], envKeyPresent, usableCount } = ring.data?.data || {};
+  const { keys = [], envKeyPresent, envKey, usableCount } = ring.data?.data || {};
 
   return (
     <>
@@ -146,10 +146,28 @@ export default function Settings() {
               : 'No usable key — AI features will fail'}
           </p>
           {envKeyPresent ? (
-            <p className="mt-0.5 text-ink-600">
-              A key from <code className="rounded bg-white/70 px-1">GEMINI_API_KEY</code> in your{' '}
-              <code className="rounded bg-white/70 px-1">.env</code> is also in the ring, tried last.
-            </p>
+            <div className="mt-1 text-ink-600">
+              <p>
+                A key from <code className="rounded bg-white/70 px-1">GEMINI_API_KEY</code> is also
+                in the ring, tried last.
+                {envKey?.available ? null : (
+                  <span className="font-medium text-rose-700">
+                    {' '}
+                    It is currently skipped ({STATUS[envKey?.status]?.label || envKey?.status}).
+                  </span>
+                )}
+              </p>
+              {envKey && !envKey.available ? (
+                <Button
+                  variant="secondary"
+                  className="mt-2"
+                  icon={RefreshCw}
+                  onClick={() => act('env', () => keyApi.reviveEnv(), 'Will be tried again.')}
+                >
+                  Try it again now
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
