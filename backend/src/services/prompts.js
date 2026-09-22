@@ -191,23 +191,43 @@ Return EXACTLY this JSON shape:
       { "section": "string", "questions": 0, "marks": 0, "durationMinutes": 0, "negativeMarking": 0 }
     ]
   },
+  "syllabusQuote": "the lines from the document that state the syllabus or scheme of examination, copied verbatim. Empty string if the document truly does not contain one.",
   "syllabus": [
     {
       "subject": "string",
       "weightage": 0,
+      "fromNotification": true,
       "topics": [
-        { "name": "string", "subtopics": ["at most 3"], "importance": "low | medium | high" }
+        {
+          "name": "string",
+          "subtopics": ["at most 3"],
+          "importance": "low | medium | high",
+          "fromNotification": true
+        }
       ]
     }
   ],
   "subjects": ["flat list of subject names, same order as syllabus"],
-  "aiNotes": "note here if you expanded any subject yourself"
+  "aiNotes": "say plainly how much of this syllabus you read from the document and how much you supplied"
 }
 
-Guidance:
+FIND THE REAL SYLLABUS FIRST. This is the point of the whole task — a learner
+will study what you return here, so an invented syllabus sends them to the wrong
+exam.
+
+1. Search the document for the section that lists what the exam tests. It may be
+   headed "Syllabus", "Scheme of Examination", "Course Content", "Pattern of
+   Examination", or sit in an annexure or a table near the end.
+2. Copy that section verbatim into "syllabusQuote" BEFORE you structure it. If
+   you cannot find such a section, leave "syllabusQuote" empty and say so.
+3. Build "syllabus" from what you quoted. Every subject and topic that appears
+   in the document gets "fromNotification": true.
+4. Only then, if the document names a subject without listing its topics, you
+   may add the topics that exam actually tests — and each added topic MUST have
+   "fromNotification": false. Never mark something you supplied as true.
+
+Other guidance:
 - "negativeMarking" is the fraction deducted per wrong answer (e.g. 0.25), or 0 if none.
-- If the notification only names a subject without listing topics, expand it into
-  the 8-15 topics that exam actually tests, and say so in "aiNotes".
 - "importance" should reflect the weightage that topic historically carries in this exam.
 - Keep it compact: no more than 3 subtopics per topic.
 

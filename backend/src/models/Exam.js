@@ -4,6 +4,8 @@ const syllabusSubjectSchema = new mongoose.Schema(
   {
     subject: { type: String, required: true, trim: true },
     weightage: { type: Number, default: 0 },
+    /** False when the AI supplied this subject rather than reading it. */
+    fromNotification: { type: Boolean, default: true },
     topics: [
       {
         _id: false,
@@ -11,6 +13,8 @@ const syllabusSubjectSchema = new mongoose.Schema(
         subtopics: [{ type: String, trim: true }],
         importance: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
         estimatedHours: { type: Number, default: 2 },
+        /** False when the AI supplied this topic rather than reading it. */
+        fromNotification: { type: Boolean, default: true },
       },
     ],
   },
@@ -89,6 +93,9 @@ const examSchema = new mongoose.Schema(
      * do not change, so regenerating it on every mock is a wasted model call.
      */
     mockBlueprint: { type: mongoose.Schema.Types.Mixed, default: null },
+
+    /** The syllabus text as printed, so the extraction can be checked against it. */
+    syllabusQuote: { type: String, default: '' },
 
     aiConfidence: { type: Number, default: 0 },
     aiNotes: { type: String, default: '' },

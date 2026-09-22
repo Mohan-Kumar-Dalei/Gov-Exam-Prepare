@@ -23,12 +23,15 @@ function normaliseExam(raw) {
     .map((s) => ({
       subject: str(s.subject),
       weightage: num(s.weightage),
+      fromNotification: s.fromNotification !== false,
       topics: arr(s.topics)
         .map((t) => ({
           name: typeof t === 'string' ? t : str(t.name),
           subtopics: typeof t === 'string' ? [] : arr(t.subtopics).map((x) => str(x)).filter(Boolean),
           importance: ['low', 'medium', 'high'].includes(t?.importance) ? t.importance : 'medium',
           estimatedHours: num(t?.estimatedHours, 2),
+          // Absent means the model did not answer the question; assume it read it.
+          fromNotification: typeof t === 'string' ? true : t?.fromNotification !== false,
         }))
         .filter((t) => t.name),
     }))
@@ -101,6 +104,7 @@ function normaliseExam(raw) {
       amount: str(f.amount),
     })),
     officialLinks: arr(raw.officialLinks).map((l) => str(l)).filter(Boolean),
+    syllabusQuote: str(raw.syllabusQuote),
     aiConfidence: Math.min(100, Math.max(0, num(raw.aiConfidence))),
     aiNotes: str(raw.aiNotes),
   };
@@ -224,11 +228,16 @@ async function analyzeNotification(input) {
       text: clampText(sourceText, 120000),
       attachment: {},
     });
+    const exam = normaliseExam(merged);
+    const all = exam.syllabus.flatMap((s) => s.topics);
+    const read = all.filter((t) => t.fromNotification).length;
     logger.info(
-      `Notification analysed from text (2 parallel passes) in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+      `Notification analysed from text in ${((Date.now() - startedAt) / 1000).toFixed(1)}s — ` +
+        `${read}/${all.length} topics read from the document` +
+        `${exam.syllabusQuote ? '' : ' (no syllabus section was found)'}`,
       { tokens },
     );
-    return normaliseExam(merged);
+    return exam;
   }
 
   if (!buffer?.length) {

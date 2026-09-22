@@ -290,6 +290,29 @@ export default function Upload() {
                   </p>
                 ) : null}
 
+                {(() => {
+                  const topics = (result.exam.syllabus || []).flatMap((s) => s.topics || []);
+                  const invented = topics.filter((t) => t.fromNotification === false).length;
+                  if (!topics.length) return null;
+
+                  // The learner studies this list, so say plainly where it came from.
+                  return invented ? (
+                    <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-900">
+                      <strong>
+                        {topics.length - invented} of {topics.length} topics were read from your PDF.
+                      </strong>{' '}
+                      The other {invented} were added by the AI because the notification named the
+                      subject without listing its topics. Those are marked below — check them against
+                      the original before relying on them.
+                    </p>
+                  ) : (
+                    <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">
+                      <strong>All {topics.length} topics were read from your PDF.</strong> Nothing
+                      was invented.
+                    </p>
+                  );
+                })()}
+
                 <div className="mt-5 space-y-4">
                   {result.exam.syllabus?.map((s) => (
                     <div key={s.subject}>
@@ -301,15 +324,23 @@ export default function Upload() {
                         {s.topics.map((t) => (
                           <span
                             key={t.name}
+                            title={
+                              t.fromNotification === false
+                                ? 'Added by the AI — not found in your PDF'
+                                : 'Read from your PDF'
+                            }
                             className={`chip ${
-                              t.importance === 'high'
-                                ? 'bg-rose-50 text-rose-700'
-                                : t.importance === 'low'
-                                  ? 'bg-ink-100 text-ink-600'
-                                  : 'bg-brand-50 text-brand-700'
+                              t.fromNotification === false
+                                ? 'border border-dashed border-amber-400 bg-amber-50 text-amber-800'
+                                : t.importance === 'high'
+                                  ? 'bg-rose-50 text-rose-700'
+                                  : t.importance === 'low'
+                                    ? 'bg-ink-100 text-ink-600'
+                                    : 'bg-brand-50 text-brand-700'
                             }`}
                           >
                             {t.name}
+                            {t.fromNotification === false ? ' *' : ''}
                           </span>
                         ))}
                       </div>

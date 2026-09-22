@@ -122,6 +122,8 @@ That last row matters: a 503 means the model is busy, and the same model is busy
 
 `GEMINI_API_KEY` from `.env` still works and is appended to the ring as a last resort, so a fresh install runs before anything is configured. The ring is admin-only; the **first account to sign up becomes the admin**, since there is no other bootstrap path.
 
+Syllabus extraction records where each topic came from. The syllabus pass must quote the document's own ``Syllabus`` or ``Scheme of Examination`` section verbatim into `syllabusQuote` **before** structuring it, and every subject and topic carries `fromNotification`. Topics the model supplied because the notification named a subject without listing its contents are marked `false` and shown dashed in the UI, with a count of how many were read from the notification versus added. An invented syllabus sends a learner to the wrong exam, so this has to be visible rather than buried in a note.
+
 ### Exam authenticity
 
 Questions are worthless if they do not resemble the real paper, so the generation prompt treats this as a correctness requirement: model each question on the exam's actual previous-year papers (or the closest equivalent SSC/RRB/IBPS/state-PSC paper), never invent a name, date, figure or scheme, and avoid volatile facts outside Current Affairs.
