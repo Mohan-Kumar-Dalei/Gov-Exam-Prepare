@@ -10,7 +10,7 @@ services:
     name: gov-exam-prepare
     runtime: node
     plan: free
-    region: singapore
+    region: singapore   # closest to India; change if you prefer another
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /api/health

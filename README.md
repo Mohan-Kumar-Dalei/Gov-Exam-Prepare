@@ -51,6 +51,8 @@ build: npm install && npm run build      # installs both halves, builds the fron
 start: npm start                         # runs the API, which serves frontend/dist
 ```
 
+The root `build` script installs the frontend with `--include=dev` on purpose. Render sets `NODE_ENV=production` during the build, which otherwise makes npm skip devDependencies — and Vite, Tailwind and PostCSS all live there, so the build would fail with "vite: not found".
+
 **MongoDB is not included.** Render does not host it, so `MONGO_URI` must point at a MongoDB Atlas cluster — the free M0 tier is enough. In Atlas, allow access from anywhere (`0.0.0.0/0`) or from Render's outbound addresses, otherwise the connection is refused.
 
 Set these in the Render dashboard (the blueprint marks them `sync: false` so they are never committed):
