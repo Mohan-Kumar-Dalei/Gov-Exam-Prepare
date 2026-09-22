@@ -1,4 +1,4 @@
-const { generateJson, generateStream, uploadFile, deleteFile } = require('./gemini.service.js');
+const { generate, generateJson, generateStream, uploadFile, deleteFile } = require('./gemini.service.js');
 const P = require('./prompts.js');
 const { clampText } = require('../utils/text.js');
 const { safeExtractJson } = require('../utils/jsonExtract.js');
@@ -110,14 +110,87 @@ function normaliseExam(raw) {
 const INLINE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 /**
+ * Turns a scanned PDF into plain text, once.
+ *
+ * Analysis then runs on that text rather than on page images, which is cheaper,
+ * faster and repeatable: a later re-analysis needs no vision call at all, and
+ * the transcript can be read back to see exactly what the model saw.
+ *
+ * @returns {Promise<{ text: string, usage: object }>}
+ */
+async function transcribePdf({ buffer, mimeType = 'application/pdf', displayName = 'notification.pdf' }) {
+  const large = buffer.length > INLINE_LIMIT_BYTES;
+  let uploaded = null;
+  const startedAt = Date.now();
+
+  try {
+    if (large) uploaded = await uploadFile({ buffer, mimeType, displayName });
+
+    const attachment = uploaded
+      ? { fileUris: [{ mimeType: uploaded.mimeType, uri: uploaded.uri }] }
+      : { files: [{ mimeType, data: buffer.toString('base64') }] };
+
+    const res = await generate({
+      system: P.TUTOR_PROSE_SYSTEM,
+      prompt: P.transcribePrompt(),
+      ...attachment,
+      temperature: 0.1, // transcription is not a creative task
+      maxOutputTokens: 65536,
+    });
+
+    const text = (res.text || '').trim();
+    logger.info(
+      `Transcribed ${(buffer.length / 1048576).toFixed(1)}MB to ${text.length} chars in ${(
+        (Date.now() - startedAt) / 1000
+      ).toFixed(1)}s`,
+      { tokens: res.usage?.totalTokens || 0 },
+    );
+
+    return { text, usage: res.usage };
+  } finally {
+    if (uploaded) await deleteFile(uploaded.name);
+  }
+}
+
+/** Runs the two analysis passes concurrently over whatever source is available. */
+async function runAnalysisPasses({ text, attachment }) {
+  const [identity, syllabus] = await Promise.all([
+    generateJson({
+      system: P.BRAIN_SYSTEM,
+      prompt: P.analyzeIdentityVisionPrompt(text),
+      ...attachment,
+      temperature: 0.2,
+      maxOutputTokens: 16384,
+    }),
+    generateJson({
+      system: P.BRAIN_SYSTEM,
+      prompt: P.analyzeSyllabusVisionPrompt(text),
+      ...attachment,
+      temperature: 0.2,
+      maxOutputTokens: 24576,
+    }),
+  ]);
+
+  return {
+    merged: {
+      ...(identity.data || {}),
+      ...(syllabus.data || {}),
+      // Both halves may comment; keep whatever each one noticed.
+      aiNotes: [identity.data?.aiNotes, syllabus.data?.aiNotes].filter(Boolean).join(' '),
+      aiConfidence: identity.data?.aiConfidence ?? syllabus.data?.aiConfidence ?? 0,
+    },
+    tokens: (identity.usage?.totalTokens || 0) + (syllabus.usage?.totalTokens || 0),
+  };
+}
+
+/**
  * Turns a notification into structured exam data.
  *
- * Pass `{ text }` for a normal PDF, or `{ buffer }` for a scanned one with no
- * text layer — the model then reads the page images itself. Small scans are
- * inlined; larger ones go through the Files API so the generate call stays
- * small and retries do not re-upload megabytes.
+ * Pass `{ text }` when the PDF had a usable text layer. Pass `{ buffer }` for a
+ * scan: it is transcribed to text first, and that text drives the analysis.
+ * Direct vision remains as a fallback if transcription fails.
  *
- * @param {string|{ text?: string, buffer?: Buffer|null, mimeType?: string, displayName?: string }} input
+ * @param {string|{ text?: string, buffer?: Buffer|null, mimeType?: string, displayName?: string, onTranscript?: Function }} input
  */
 async function analyzeNotification(input) {
   const {
@@ -125,21 +198,45 @@ async function analyzeNotification(input) {
     buffer = null,
     mimeType = 'application/pdf',
     displayName = 'notification.pdf',
+    onTranscript,
   } = typeof input === 'string' ? { text: input } : input || {};
 
-  const useVision = Boolean(buffer?.length);
+  let sourceText = text;
 
-  if (!useVision) {
-    const { data, usage } = await generateJson({
-      system: P.BRAIN_SYSTEM,
-      prompt: P.analyzeNotificationPrompt(clampText(text, 120000)),
-      temperature: 0.2,
-      maxOutputTokens: 32768,
-    });
-    logger.info('Notification analysed via text', { tokens: usage.totalTokens });
-    return normaliseExam(data || {});
+  // A scan becomes text first, so everything after this is the cheap path.
+  if (!sourceText && buffer?.length) {
+    try {
+      const transcript = await transcribePdf({ buffer, mimeType, displayName });
+      if (transcript.text.length >= 200) {
+        sourceText = transcript.text;
+        await onTranscript?.(sourceText);
+      } else {
+        logger.warn(`Transcription returned only ${transcript.text.length} chars; falling back to vision`);
+      }
+    } catch (err) {
+      logger.warn(`Transcription failed (${err.message}); falling back to direct vision analysis`);
+    }
   }
 
+  if (sourceText) {
+    const startedAt = Date.now();
+    const { merged, tokens } = await runAnalysisPasses({
+      text: clampText(sourceText, 120000),
+      attachment: {},
+    });
+    logger.info(
+      `Notification analysed from text (2 parallel passes) in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+      { tokens },
+    );
+    return normaliseExam(merged);
+  }
+
+  if (!buffer?.length) {
+    throw ApiError.unprocessable('There was no text and no file to analyse.');
+  }
+
+  // Fallback: transcription did not produce usable text, so read the pages
+  // directly. Slower and dearer, but better than refusing the document.
   const large = buffer.length > INLINE_LIMIT_BYTES;
   let uploaded = null;
   const startedAt = Date.now();
@@ -149,44 +246,17 @@ async function analyzeNotification(input) {
       uploaded = await uploadFile({ buffer, mimeType, displayName });
     }
 
-    // Reading the pages is cheap; generating the long JSON is what costs time.
-    // Splitting the extraction in half and running both concurrently roughly
-    // halves wall-clock latency for a scanned notification.
     const attachment = uploaded
       ? { fileUris: [{ mimeType: uploaded.mimeType, uri: uploaded.uri }] }
       : { files: [{ mimeType, data: buffer.toString('base64') }] };
 
-    const [identity, syllabus] = await Promise.all([
-      generateJson({
-        system: P.BRAIN_SYSTEM,
-        prompt: P.analyzeIdentityVisionPrompt(),
-        ...attachment,
-        temperature: 0.2,
-        maxOutputTokens: 16384,
-      }),
-      generateJson({
-        system: P.BRAIN_SYSTEM,
-        prompt: P.analyzeSyllabusVisionPrompt(),
-        ...attachment,
-        temperature: 0.2,
-        maxOutputTokens: 24576,
-      }),
-    ]);
-
-    const merged = {
-      ...(identity.data || {}),
-      ...(syllabus.data || {}),
-      // Both halves may comment; keep whatever each one noticed.
-      aiNotes: [identity.data?.aiNotes, syllabus.data?.aiNotes].filter(Boolean).join(' '),
-      aiConfidence: identity.data?.aiConfidence ?? syllabus.data?.aiConfidence ?? 0,
-    };
+    const { merged, tokens } = await runAnalysisPasses({ text: '', attachment });
 
     logger.info(
-      `Notification analysed via vision (${large ? 'files api' : 'inline'}, 2 parallel passes) in ${(
-        (Date.now() - startedAt) /
-        1000
+      `Notification analysed via vision fallback (${large ? 'files api' : 'inline'}) in ${(
+        (Date.now() - startedAt) / 1000
       ).toFixed(1)}s`,
-      { tokens: (identity.usage?.totalTokens || 0) + (syllabus.usage?.totalTokens || 0) },
+      { tokens },
     );
     return normaliseExam(merged);
   } finally {
@@ -641,6 +711,7 @@ async function askMentor({ context, question, history = [], language = 'en' }) {
 
 module.exports = {
   analyzeNotification,
+  transcribePdf,
   generateLessonStreamed,
   askMentorStream,
   generateLesson,
@@ -651,4 +722,4 @@ module.exports = {
   predictReadiness,
   askMentor,
 };
-Object.assign(module.exports, { analyzeNotification, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });
+Object.assign(module.exports, { analyzeNotification, transcribePdf, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });

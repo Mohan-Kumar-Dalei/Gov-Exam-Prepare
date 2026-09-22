@@ -31,10 +31,22 @@ async function runPipeline(doc, user) {
     doc.status = 'analyzing';
     await doc.save();
 
-    // A scanned notification has no usable text layer, so Gemini reads the pages.
+    // A scan is transcribed to text first; that transcript is saved straight
+    // away so a later re-analysis never needs to read the pages again — which
+    // matters on hosts with an ephemeral disk, where the file itself is gone.
     const analysis = await analyzeNotification(
       needsVision
-        ? { buffer, mimeType: doc.mimeType, displayName: doc.originalName }
+        ? {
+            buffer,
+            mimeType: doc.mimeType,
+            displayName: doc.originalName,
+            onTranscript: async (transcript) => {
+              doc.extractedText = transcript;
+              doc.charCount = transcript.length;
+              await doc.save();
+              logger.info(`Stored ${transcript.length} chars of transcript for ${doc.originalName}`);
+            },
+          }
         : { text },
     );
 
@@ -172,14 +184,24 @@ const reanalyze = asyncHandler(async (req, res) => {
   doc.status = 'analyzing';
   await doc.save();
 
-  // Scanned documents have no stored text, so re-read the file from disk.
+  // The stored text — whether from the PDF's own layer or from an earlier
+  // transcription — is enough. Only fall back to the file if there is none.
   let payload;
   if (doc.extractedText) {
     payload = { text: doc.extractedText };
   } else {
     const { buffer, needsVision } = await parsePdf(doc.path);
     if (!needsVision) throw ApiError.badRequest('This document has no content to analyse.');
-    payload = { buffer, mimeType: doc.mimeType, displayName: doc.originalName };
+    payload = {
+      buffer,
+      mimeType: doc.mimeType,
+      displayName: doc.originalName,
+      onTranscript: async (transcript) => {
+        doc.extractedText = transcript;
+        doc.charCount = transcript.length;
+        await doc.save();
+      },
+    };
   }
 
   const analysis = await analyzeNotification(payload);

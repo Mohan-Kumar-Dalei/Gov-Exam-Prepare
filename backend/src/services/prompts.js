@@ -116,7 +116,36 @@ Reading guidance for scans:
  * smaller concurrent responses finish far sooner than one long one. The halves
  * are chosen so neither needs the other's output.
  */
-const analyzeIdentityVisionPrompt = () => `Read this recruitment notification and extract its identity and logistics.
+/**
+ * Step one for a scanned notification: turn the pages into text, once.
+ *
+ * Doing this separately means everything downstream — both analysis passes,
+ * every later re-analysis — runs on cheap text instead of re-uploading page
+ * images, and the operator can read exactly what the model saw.
+ */
+const transcribePrompt = () => `Transcribe this scanned document to plain text.
+
+Rules:
+- Transcribe everything, page by page, in reading order. Do not summarise, and do not skip headers, footnotes, stamps or annexures.
+- Government notifications are full of ruled tables. Render each one as a markdown table, keeping the column headers with their values — vacancy counts and category names must stay on the same row.
+- Start each page with a line of the form "--- PAGE 3 ---".
+- Preserve numbers, dates, article numbers and abbreviations exactly as printed. Never correct or normalise them.
+- Where a word is genuinely illegible, write [illegible] rather than guessing.
+- Output the transcription only. No preamble, no commentary, no JSON.`;
+
+/** Shared tail: either the text to read, or a note that a PDF is attached. */
+const sourceBlock = (text) =>
+  text
+    ? `
+--- NOTIFICATION TEXT ---
+${text}`
+    : `
+The notification is attached as a PDF. It is a scan, so read the page images directly.
+Read every page, including tables, stamps and footnotes. Follow column headers
+carefully so values stay attached to the right row. Where something is
+illegible, use 0, null or an empty string and say so in "aiNotes".`;
+
+const analyzeIdentityVisionPrompt = (text = '') => `Read this recruitment notification and extract its identity and logistics.
 
 Return EXACTLY this JSON shape:
 {
@@ -146,9 +175,9 @@ Return EXACTLY this JSON shape:
 Do NOT include a syllabus or exam pattern — another pass handles those.
 Numbers must be numbers, not strings. "aiConfidence" is 0-100.
 
-${SCAN_READING_GUIDANCE}`;
+${sourceBlock(text)}`;
 
-const analyzeSyllabusVisionPrompt = () => `Read this recruitment notification and extract its exam pattern and syllabus.
+const analyzeSyllabusVisionPrompt = (text = '') => `Read this recruitment notification and extract its exam pattern and syllabus.
 
 Return EXACTLY this JSON shape:
 {
@@ -182,7 +211,7 @@ Guidance:
 - "importance" should reflect the weightage that topic historically carries in this exam.
 - Keep it compact: no more than 3 subtopics per topic.
 
-${SCAN_READING_GUIDANCE}`;
+${sourceBlock(text)}`;
 
 /* ------------------------------------------------------------------ */
 /* PHASE 1 — LEARNING MODE                                             */
@@ -572,6 +601,7 @@ module.exports = {
   BRAIN_SYSTEM,
   MENTOR_SYSTEM,
   analyzeNotificationPrompt,
+  transcribePrompt,
   analyzeIdentityVisionPrompt,
   analyzeSyllabusVisionPrompt,
   lessonPrompt,
@@ -582,4 +612,4 @@ module.exports = {
   readinessPrompt,
   mentorContextPrompt,
 };
-Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });
+Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, transcribePrompt, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });

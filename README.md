@@ -80,11 +80,13 @@ After the first deploy, sign up — **the first account becomes the admin** and 
 `POST /api/documents/upload` accepts the file, returns **202 Accepted** with a `documentId`, and runs the chain in the background. The client polls `GET /api/documents/:id/status` until `completed` or `failed`. This is not optional polish: under upstream load, Gemini retries and model fallbacks can push a scanned PDF past any browser timeout, and a dropped connection would otherwise lose the work.
 
 1. **Multer** stores the PDF (20MB cap, PDF-only filter).
-2. **pdf-parse** extracts the text layer. If there is none — a scanned notification — the raw PDF bytes are sent to Gemini instead, which reads the pages as images.
-3. **Gemini 3.6 Flash** returns structured JSON: exam name, organization, vacancies, eligibility, selection process, exam pattern, syllabus, subject-wise topics, important dates.
-4. The result is normalised and saved as an **Exam** document.
-5. A **Progress** row is created for every topic — the adaptive engine's memory.
-6. A **60-day roadmap** is generated automatically (best-effort; a failure here does not lose the analysis).
+2. **pdf-parse** extracts the text layer.
+3. If there is none — a scanned notification — the PDF is **transcribed to text once**, by Gemini, with tables preserved as markdown. That transcript is stored immediately.
+4. Everything after this point reads text, never page images: both analysis passes, and any later re-analysis. Direct vision remains only as a fallback if transcription produces nothing usable.
+5. **Gemini 3.6 Flash** returns structured JSON: exam name, organization, vacancies, eligibility, selection process, exam pattern, syllabus, subject-wise topics, important dates.
+6. The result is normalised and saved as an **Exam** document.
+7. A **Progress** row is created for every topic — the adaptive engine's memory.
+8. A **60-day roadmap** is generated automatically (best-effort; a failure here does not lose the analysis).
 
 Concurrent identical requests are collapsed on both sides: `useAsync` shares one in-flight promise (React StrictMode fires effects twice in development, which would otherwise double every generation), and lesson writes upsert rather than insert, so a genuine race cannot trip the unique index.
 
@@ -264,6 +266,7 @@ Every response uses the same envelope:
   - *Streaming mentor* — `POST /mentor/stream` returns Server-Sent Events, so the first words appear in about a second. Its follow-up chips and action buttons are derived from the learner's own data rather than requested from the model, removing a second round trip.
   - *Streaming lessons* — measured throughput on the free tier is roughly 19 output tokens/second, so one long response is the slowest possible shape. A lesson is therefore split: the teaching prose streams straight to the page while the notes, tricks and examples are generated concurrently. The learner reads within a second or two instead of waiting for the whole lesson.
   - *Token diet* — question explanations are capped at 40 words. At ~19 tokens/second, every unnecessary word is measurable waiting.
+  - *Transcribe once* — a scan costs one vision call, not one per analysis. Re-analysing, or analysing again after a restart, runs on the stored text, which also means it works on hosts with an ephemeral disk where the original file is gone.
   - *Cached mock blueprint* — stored on the Exam and invalidated when the syllabus or pattern changes, removing a model call from every mock.
 - **Scan latency**: reading page images is cheap; generating the long JSON is what costs time. The vision extraction is therefore split into two halves — identity/logistics and syllabus/pattern — issued concurrently against a single uploaded file and merged, so wall-clock time is roughly halved.
 - **Transport**: all Gemini calls go through the official `@google/genai` SDK, which owns the HTTP, streaming frame parsing and the resumable upload protocol. The backend therefore makes no raw HTTP calls of its own — there is no `fetch` or `axios` in `backend/src`. `services/gemini.service.js` wraps the SDK with the parts it does not provide: the model fallback chain, status-aware backoff and actionable error messages. The frontend still uses axios for its own API calls.
