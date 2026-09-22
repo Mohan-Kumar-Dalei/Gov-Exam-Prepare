@@ -22,22 +22,36 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(
-  cors({
-    origin(origin, cb) {
-      // Allow same-origin / curl (no Origin header) and any configured client.
-      if (!origin || CLIENT_ORIGINS.includes(origin)) return cb(null, true);
-      return cb(new Error(`Origin ${origin} is not allowed by CORS`));
-    },
-    credentials: true,
-  }),
-);
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(morgan(IS_PROD ? 'combined' : 'dev'));
 
-app.use('/api', apiLimiter, routes);
+/**
+ * CORS applies to the API only.
+ *
+ * Static assets are served from this same origin, so a cross-origin policy has
+ * no business gating them — and an over-strict one turns a stylesheet into a
+ * JSON error, which the browser then rejects on MIME grounds.
+ *
+ * The service's own origin is always allowed, whatever CLIENT_ORIGIN says:
+ * when the API and the frontend share a process, the app must be able to call
+ * itself without anyone having to configure that.
+ */
+const corsPolicy = (req, cb) => {
+  const { origin } = req.headers;
+  const selfOrigin = `${req.protocol}://${req.get('host')}`;
+
+  const allowed =
+    !origin || // same-origin navigations, curl, server-to-server
+    origin === selfOrigin ||
+    CLIENT_ORIGINS.includes(origin);
+
+  // Denial means "send no CORS headers", never "throw a 500".
+  cb(null, { origin: allowed, credentials: true });
+};
+
+app.use('/api', cors(corsPolicy), apiLimiter, routes);
 
 /**
  * In production the built frontend is served from this same process, so the
