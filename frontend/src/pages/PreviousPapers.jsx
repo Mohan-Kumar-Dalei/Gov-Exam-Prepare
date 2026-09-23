@@ -309,6 +309,10 @@ export default function PreviousPapers() {
   const [liveNote, setLiveNote] = useState('');
   const [openPaper, setOpenPaper] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
+  // Which card is mid-action, so its button can show progress and a second
+  // click cannot fire the same request again. Fetching a paper pulls every
+  // question with it, which takes a visible moment.
+  const [busy, setBusy] = useState(null); // { id, action }
 
   const list = useAsync(
     () => (activeExamId ? paperApi.list(activeExamId) : Promise.resolve(null)),
@@ -360,15 +364,19 @@ export default function PreviousPapers() {
   };
 
   const open = async (paper) => {
+    setBusy({ id: paper._id, action: 'open' });
     try {
       const res = await paperApi.get(activeExamId, paper._id);
       setOpenPaper(res.data.paper);
     } catch (err) {
       toast.error(err.message);
+    } finally {
+      setBusy(null);
     }
   };
 
   const remove = async (paper) => {
+    setBusy({ id: paper._id, action: 'delete' });
     try {
       await paperApi.remove(activeExamId, paper._id);
       toast.success('Paper deleted.');
@@ -376,6 +384,8 @@ export default function PreviousPapers() {
       await list.run();
     } catch (err) {
       toast.error(err.message);
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -515,11 +525,19 @@ export default function PreviousPapers() {
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2 border-t border-ink-100 pt-4">
-                <Button onClick={() => open(p)}>Revise</Button>
+                <Button
+                  onClick={() => open(p)}
+                  loading={busy?.id === p._id && busy.action === 'open'}
+                  disabled={busy?.id === p._id}
+                >
+                  {busy?.id === p._id && busy.action === 'open' ? 'Opening…' : 'Revise'}
+                </Button>
                 <Button
                   variant="secondary"
                   icon={Trash2}
                   onClick={() => remove(p)}
+                  loading={busy?.id === p._id && busy.action === 'delete'}
+                  disabled={busy?.id === p._id}
                   className="ml-auto"
                 >
                   Delete
