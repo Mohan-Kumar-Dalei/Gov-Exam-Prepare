@@ -75,6 +75,51 @@ async function adoptLegacyKeys(owner) {
 }
 
 /**
+ * Re-files keys that an earlier misclassification parked as out of credits.
+ *
+ * Until recently a 429 was read as depleted credits, because Google's quota
+ * message mentions "billing details". Those keys were parked with no cooldown,
+ * so they stay dead until someone revives each one by hand — and the owner is
+ * told to top up an account that has nothing wrong with it.
+ *
+ * That was this app's mistake, so this app undoes it rather than leaving a
+ * cleanup chore behind. Only rows whose stored error is visibly a 429 are
+ * touched; a genuine billing failure keeps its status, because that one really
+ * does need paying.
+ *
+ * @returns {Promise<number>} how many rows were re-filed
+ */
+const LOOKS_LIKE_429 = /"code"\s*:\s*429|RESOURCE_EXHAUSTED|docs\/rate-limits/i;
+
+async function reclassifyMisparkedKeys(owner) {
+  const rows = await ApiKey.find({ user: owner, status: 'exhausted' }).select('label lastError');
+
+  let fixed = 0;
+  for (const row of rows) {
+    const detail = row.lastError || '';
+    if (!LOOKS_LIKE_429.test(detail)) continue;
+    if (classify(0, detail).status === 'exhausted') continue; // really is billing
+
+    await ApiKey.updateOne(
+      { _id: row._id },
+      {
+        status: 'rate_limited',
+        cooldownUntil: new Date(Date.now() + rateLimitCooldown(detail)),
+      },
+    ).catch(() => {});
+    fixed += 1;
+  }
+
+  if (fixed) {
+    logger.info(
+      `Re-filed ${fixed} key(s) from "out of credits" to "quota exceeded" — they hit a usage ` +
+        'limit rather than running out of credit, and will be retried automatically.',
+    );
+  }
+  return fixed;
+}
+
+/**
  * One owner's keys to try, in order, as `{ id, key, label }`.
  * `id` is null for the environment key, which has no database row.
  *
@@ -82,7 +127,7 @@ async function adoptLegacyKeys(owner) {
  * @param {string}  opts.userId  whose ring to read — required
  * @param {boolean} opts.isAdmin whether the environment key may be offered
  */
-async function getUsableKeys({ userId, isAdmin = false, force = false } = {}) {
+async function getUsableKeys({ userId, isAdmin = false, force = false, healed = false } = {}) {
   if (!userId) return [];
 
   const owner = String(userId);
@@ -121,6 +166,22 @@ async function getUsableKeys({ userId, isAdmin = false, force = false } = {}) {
     usable.push({ id: String(row._id), key: plain, label: row.label });
   }
 
+  // Every key filed as dead may just be mis-filed. Re-check once, only when
+  // there is nothing left to try, so the normal path costs nothing.
+  if (!usable.length && !healed) {
+    try {
+      if (await reclassifyMisparkedKeys(owner)) {
+        cache.delete(owner);
+        // `healed` stops this recursing: a re-filed key is no longer
+        // "exhausted", so a second pass would find nothing anyway, but the
+        // flag makes that a guarantee rather than a consequence.
+        return getUsableKeys({ userId, isAdmin, force: true, healed: true });
+      }
+    } catch (err) {
+      logger.warn(`Could not re-check parked keys: ${err.message}`);
+    }
+  }
+
   // The operator's own key, offered only to the operator.
   const fromEnv = envKey();
   if (isAdmin && fromEnv && envKeyAvailable() && !usable.some((k) => k.key === fromEnv)) {
@@ -148,13 +209,73 @@ async function countOwnerlessKeys() {
   }
 }
 
+/**
+ * How long a 429 should sit out.
+ *
+ * Google returns RESOURCE_EXHAUSTED for two very different things: a
+ * per-minute burst limit, which clears in a moment, and a daily quota, which
+ * does not clear until the quota resets. Treating both as five minutes means
+ * hammering a key that cannot answer until tomorrow.
+ *
+ * The response often carries a retryDelay; when it does, that is the most
+ * reliable answer available and it wins.
+ */
+const DAILY_QUOTA = /per\s*day|perday|requests per day|daily limit|quota_?metric.*day/i;
+
+const retryDelayMs = (detail) => {
+  const m = detail.match(/retry\s*-?\s*delay"?\s*[:=]\s*"?(\d+(?:\.\d+)?)\s*s/i);
+  return m ? Math.ceil(Number(m[1]) * 1000) : 0;
+};
+
+/**
+ * Milliseconds until the free-tier daily quota resets.
+ *
+ * Google resets it at midnight America/Los_Angeles, which is not a fixed
+ * offset from here, so the current Pacific wall-clock time is asked for
+ * directly rather than computed from a hardcoded offset that breaks twice a
+ * year.
+ */
+function msUntilQuotaReset(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(now);
+
+  const [h, m, sec] = parts.split(':').map(Number);
+  const elapsed = (((h % 24) * 60 + m) * 60 + sec) * 1000;
+  return 24 * 60 * 60 * 1000 - elapsed;
+}
+
+function rateLimitCooldown(detail) {
+  const told = retryDelayMs(detail);
+  // Cap it: a malformed or absurd delay must not park a key for days.
+  if (told) return Math.min(told + 1000, 6 * 60 * 60 * 1000);
+  if (DAILY_QUOTA.test(detail)) return msUntilQuotaReset();
+  return RATE_LIMIT_COOLDOWN_MS;
+}
+
 /** Classifies an upstream status into what it means for the key that produced it. */
 function classify(status, detail = '') {
-  if (status === 402 || /prepayment credits are depleted|billing/i.test(detail)) {
+  // Only a real billing failure counts as exhausted: a 402, or a message that
+  // actually says the credits are gone.
+  //
+  // This used to match the bare word "billing", which Google puts in the body
+  // of every 429 — "check your plan and billing details". So an ordinary quota
+  // limit was filed as a dead card, shown as "Out of credits", and parked
+  // until someone revived it by hand. A quota comes back on its own; credits
+  // do not. Confusing the two tells the owner to go and pay for something that
+  // would have fixed itself.
+  if (
+    status === 402 ||
+    /prepayment credits are depleted|credits? (are|is) (depleted|exhausted)/i.test(detail)
+  ) {
     return { status: 'exhausted', parks: true, cooldownMs: 0 };
   }
   if (status === 429) {
-    return { status: 'rate_limited', parks: true, cooldownMs: RATE_LIMIT_COOLDOWN_MS };
+    return { status: 'rate_limited', parks: true, cooldownMs: rateLimitCooldown(detail) };
   }
   if (status === 401 || status === 403 || /api key not valid|invalid api key/i.test(detail)) {
     return { status: 'invalid', parks: true, cooldownMs: 0 };
@@ -291,6 +412,9 @@ const reviveEnvKey = () => {
 
 module.exports = {
   getUsableKeys,
+  reclassifyMisparkedKeys,
+  msUntilQuotaReset,
+  rateLimitCooldown,
   countOwnerlessKeys,
   adoptLegacyKeys,
   envKeyState,

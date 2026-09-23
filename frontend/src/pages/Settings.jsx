@@ -28,7 +28,7 @@ import {
 const STATUS = {
   ok: { tone: 'green', label: 'Working' },
   untested: { tone: 'slate', label: 'Not tested' },
-  rate_limited: { tone: 'amber', label: 'Rate limited' },
+  rate_limited: { tone: 'amber', label: 'Quota exceeded' },
   exhausted: { tone: 'red', label: 'Out of credits' },
   invalid: { tone: 'red', label: 'Invalid' },
 };
@@ -230,6 +230,20 @@ export default function Settings() {
                     {k.lastError ? (
                       <p className="mt-1 text-xs text-rose-600">{k.lastError}</p>
                     ) : null}
+                    {/* A quota comes back by itself. Saying when turns
+                        "skipped" from a dead end into a wait. */}
+                    {k.cooldownUntil && new Date(k.cooldownUntil) > new Date() ? (
+                      <p className="mt-1 text-xs font-medium text-amber-700">
+                        Waiting for the quota to reset — tried again at{' '}
+                        {new Date(k.cooldownUntil).toLocaleString('en-IN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          day: '2-digit',
+                          month: 'short',
+                        })}
+                        . Nothing to pay; it recovers on its own.
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-[11px] text-ink-400">
                       {k.successCount} ok · {k.failureCount} failed
                       {k.lastUsedAt
@@ -321,10 +335,14 @@ export default function Settings() {
           <ul className="mt-2 space-y-1.5">
             <li>
               · <strong>Out of credits (402)</strong> or an <strong>invalid key</strong> — parked
-              immediately, and the next key takes over. Press Revive after topping up.
+              immediately, and the next key takes over. These do not recover by themselves: top up
+              or replace the key, then press Revive.
             </li>
             <li>
-              · <strong>Rate limited (429)</strong> — set aside for five minutes, then tried again.
+              · <strong>Quota exceeded (429)</strong> — your key is fine and there is nothing to
+              pay; it has simply hit a usage limit. A per-minute burst is retried in five minutes. A
+              daily quota waits for the reset at midnight US Pacific, and the key shows when it will
+              be tried again.
             </li>
             <li>
               · <strong>Model overloaded (503)</strong> — this is the model being busy, not your key,
