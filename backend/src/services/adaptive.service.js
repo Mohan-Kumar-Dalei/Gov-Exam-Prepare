@@ -1,6 +1,6 @@
 const { Question, Progress, TestSession } = require('../models/index.js');
 const { generateQuestions } = require('./ai.service.js');
-const { fingerprint, shuffle } = require('../utils/text.js');
+const { fingerprint, shuffle, topicKey } = require('../utils/text.js');
 const { ADAPTIVE_WEIGHTS } = require('../config/constants.js');
 const logger = require('../utils/logger.js');
 
@@ -43,9 +43,20 @@ async function buildAdaptivePlan({
 }) {
   const allTopics = exam.flatTopics();
 
+  // The caller's labels may come from the roadmap or a question tag rather
+  // than the syllabus itself, so they are resolved to canonical labels before
+  // filtering. Matching the raw strings used to empty the pool and surface as
+  // "No syllabus topics match that filter" on a topic the learner could see.
+  // Subjects are compared on the normalised label only: there is no subject
+  // resolver, and a topic resolver would be the wrong tool for a heading.
+  const wantSubjects = new Set(subjects.map(topicKey));
+  const wantTopics = new Set(
+    topics.map((x) => topicKey(exam.resolveTopic?.(null, x)?.entry.topic ?? x)),
+  );
+
   const pool = allTopics.filter((t) => {
-    if (subjects.length && !subjects.includes(t.subject)) return false;
-    if (topics.length && !topics.includes(t.topic)) return false;
+    if (wantSubjects.size && !wantSubjects.has(topicKey(t.subject))) return false;
+    if (wantTopics.size && !wantTopics.has(topicKey(t.topic))) return false;
     return true;
   });
 
@@ -255,11 +266,20 @@ async function fetchOrGenerateQuestions({ userId, exam, plan, count, language = 
     if (!fp || existingPrints.has(fp)) continue; // dedupe within and across batches
     existingPrints.add(fp);
 
+    // The generator writes its own topic labels. Snapping them to the syllabus
+    // keeps a question's "Revise this topic" link pointing somewhere real, and
+    // keeps its Progress row merged with the rest of that topic's history
+    // instead of splitting it across two spellings.
+    const rawSubject = q.subject || plan[0].subject;
+    // Optional call: a lean exam has no methods, and question warming is
+    // fire-and-forget, so a TypeError here would vanish silently.
+    const match = exam.resolveTopic?.(rawSubject, q.topic);
+
     docs.push({
       user: userId,
       exam: exam._id,
-      subject: q.subject || plan[0].subject,
-      topic: q.topic,
+      subject: match ? match.entry.subject : rawSubject,
+      topic: match ? match.entry.topic : q.topic,
       question: q.question,
       options: q.options,
       answerIndex: q.answerIndex,

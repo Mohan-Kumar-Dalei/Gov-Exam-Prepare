@@ -77,6 +77,27 @@ function fillMissingDays({ days, generated, dailyMinutes, flatTopics }) {
  * Builds (or rebuilds) the active roadmap for a user + exam.
  * Weak topics from live Progress are fed in so a regenerated plan re-weights itself.
  */
+/**
+ * Rewrites the planner's topic labels to the syllabus ones they refer to.
+ *
+ * The planner is given the syllabus but writes its own labels, and a label
+ * that drifts even slightly becomes a day the learner cannot open. Snapping
+ * here keeps the roadmap pointing at topics that actually exist; a label that
+ * matches nothing is kept as-is rather than dropped, so the plan stays whole
+ * and the lesson endpoint decides what to do with it.
+ */
+function snapDayTopics(day, exam) {
+  const snap = (t) => {
+    const match = exam.resolveTopic?.(t.subject, t.topic);
+    return match ? { ...t, subject: match.entry.subject, topic: match.entry.topic } : t;
+  };
+  return {
+    ...day,
+    studyTopics: (day.studyTopics || []).map(snap),
+    revisionTopics: (day.revisionTopics || []).map(snap),
+  };
+}
+
 async function buildRoadmap({
   userId,
   exam,
@@ -107,10 +128,12 @@ async function buildRoadmap({
   }
 
   const start = new Date(startDate);
-  const filled = fillMissingDays({ days, generated: ai.days, dailyMinutes, flatTopics }).map((d) => ({
-    ...d,
-    date: new Date(start.getTime() + (d.day - 1) * 86400000),
-  }));
+  const filled = fillMissingDays({ days, generated: ai.days, dailyMinutes, flatTopics })
+    .map((d) => snapDayTopics(d, exam))
+    .map((d) => ({
+      ...d,
+      date: new Date(start.getTime() + (d.day - 1) * 86400000),
+    }));
 
   const existing = await Roadmap.findOne({ user: userId, exam: exam._id, isActive: true });
 

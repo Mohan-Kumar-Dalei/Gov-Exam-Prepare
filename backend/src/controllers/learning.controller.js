@@ -1,12 +1,66 @@
 const asyncHandler = require('../utils/asyncHandler.js');
 const ApiError = require('../utils/ApiError.js');
 const { ok } = require('../utils/apiResponse.js');
-const { Lesson, Progress } = require('../models/index.js');
+const { Lesson, Progress, Roadmap, Question } = require('../models/index.js');
 const { loadOwnedExam } = require('./exam.controller.js');
 const { generateLesson, generateLessonStreamed } = require('../services/ai.service.js');
 const logger = require('../utils/logger.js');
 const { normaliseLanguage } = require('../config/languages.js');
 const { warmQuestionBank } = require('../services/adaptive.service.js');
+
+/**
+ * The syllabus entry to teach, given whatever labels the caller had to hand.
+ *
+ * Topic strings arrive from three writers that never fully agree: the analyser
+ * that read the syllabus, the planner that wrote the roadmap, and the
+ * generator that tagged each question. An exact-match lookup turned every
+ * disagreement into a 400 on "Revise this topic" — the app refusing to teach
+ * something it had itself put in front of the learner.
+ *
+ * So a resolved topic is taught under its canonical label, which also keeps
+ * lessons cached once instead of once per spelling. An unresolved topic is
+ * still taught when the app surfaced it — it is on their roadmap, or it tags a
+ * question they were actually asked. Only a label from nowhere is rejected.
+ */
+async function resolveStudyTopic({ exam, userId, subject, topic }) {
+  const match = exam.resolveTopic(subject, topic);
+  if (match) {
+    if (match.matchedBy !== 'exact') {
+      logger.info(
+        `Topic "${subject} / ${topic}" resolved to ` +
+          `"${match.entry.subject} / ${match.entry.topic}" by ${match.matchedBy}`,
+      );
+    }
+    return { ...match.entry, offSyllabus: false };
+  }
+
+  const [onRoadmap, onQuestion] = await Promise.all([
+    // Both halves of a roadmap day: the revision list is what the "Revise this
+    // topic" link is built from, so checking only study topics would miss it.
+    Roadmap.exists({
+      user: userId,
+      exam: exam._id,
+      $or: [{ 'days.studyTopics.topic': topic }, { 'days.revisionTopics.topic': topic }],
+    }),
+    Question.exists({ user: userId, exam: exam._id, topic }),
+  ]);
+
+  if (onRoadmap || onQuestion) {
+    logger.warn(
+      `Teaching "${subject} / ${topic}", which is not in the extracted syllabus — ` +
+        'the roadmap or question bank surfaced it, so the learner can reach it.',
+    );
+    return { subject, topic, importance: 'medium', subtopics: [], offSyllabus: true };
+  }
+
+  return null;
+}
+
+const unknownTopic = (subject, topic) =>
+  ApiError.badRequest(
+    `"${topic}" is not a topic in ${subject} for this exam, and nothing in your ` +
+      'roadmap or question bank refers to it. Re-analyse the notification if the syllabus looks incomplete.',
+  );
 
 /**
  * GET /api/learning/:examId/lesson?subject=&topic=&refresh=
@@ -19,12 +73,19 @@ const getLesson = asyncHandler(async (req, res) => {
   const language = normaliseLanguage(req.query.language, req.user.preferences?.language);
   const exam = await loadOwnedExam(req.user._id, req.params.examId);
 
-  const known = exam.flatTopics().find((t) => t.subject === subject && t.topic === topic);
-  if (!known) {
-    throw ApiError.badRequest(`"${topic}" is not a topic in ${subject} for this exam.`);
-  }
+  const known = await resolveStudyTopic({ exam, userId: req.user._id, subject, topic });
+  if (!known) throw unknownTopic(subject, topic);
 
-  let lesson = await Lesson.findOne({ user: req.user._id, exam: exam._id, subject, topic, language });
+  // Cache and teach under the canonical label, not the caller's spelling.
+  const { subject: canonSubject, topic: canonTopic } = known;
+
+  let lesson = await Lesson.findOne({
+    user: req.user._id,
+    exam: exam._id,
+    subject: canonSubject,
+    topic: canonTopic,
+    language,
+  });
 
   if (lesson && !refresh) {
     lesson.readCount += 1;
@@ -34,8 +95,8 @@ const getLesson = asyncHandler(async (req, res) => {
 
   const content = await generateLesson({
     examName: exam.examName,
-    subject,
-    topic,
+    subject: canonSubject,
+    topic: canonTopic,
     subtopics: known.subtopics,
     level,
     language,
@@ -45,7 +106,7 @@ const getLesson = asyncHandler(async (req, res) => {
   // can both miss the cache and race to insert, which used to trip the unique
   // index and surface as a confusing 409.
   lesson = await Lesson.findOneAndUpdate(
-    { user: req.user._id, exam: exam._id, subject, topic, language },
+    { user: req.user._id, exam: exam._id, subject: canonSubject, topic: canonTopic, language },
     { $set: content, $inc: { readCount: 1 } },
     { new: true, upsert: true, setDefaultsOnInsert: true },
   );
@@ -64,8 +125,10 @@ const getLessonStream = asyncHandler(async (req, res) => {
   const language = normaliseLanguage(req.query.language, req.user.preferences?.language);
   const exam = await loadOwnedExam(req.user._id, req.params.examId);
 
-  const known = exam.flatTopics().find((t) => t.subject === subject && t.topic === topic);
-  if (!known) throw ApiError.badRequest(`"${topic}" is not a topic in ${subject} for this exam.`);
+  const known = await resolveStudyTopic({ exam, userId: req.user._id, subject, topic });
+  if (!known) throw unknownTopic(subject, topic);
+
+  const { subject: canonSubject, topic: canonTopic } = known;
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -75,7 +138,13 @@ const getLessonStream = asyncHandler(async (req, res) => {
   });
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  const cached = await Lesson.findOne({ user: req.user._id, exam: exam._id, subject, topic, language });
+  const cached = await Lesson.findOne({
+    user: req.user._id,
+    exam: exam._id,
+    subject: canonSubject,
+    topic: canonTopic,
+    language,
+  });
 
   if (cached && !refresh) {
     cached.readCount += 1;
@@ -85,13 +154,13 @@ const getLessonStream = asyncHandler(async (req, res) => {
     return res.end();
   }
 
-  send('start', { subject, topic, language });
+  send('start', { subject: canonSubject, topic: canonTopic, language });
 
   try {
     const content = await generateLessonStreamed({
       examName: exam.examName,
-      subject,
-      topic,
+      subject: canonSubject,
+      topic: canonTopic,
       subtopics: known.subtopics,
       level,
       language,
@@ -101,7 +170,7 @@ const getLessonStream = asyncHandler(async (req, res) => {
     const { structureFailed, structureError, ...fields } = content;
 
     const lesson = await Lesson.findOneAndUpdate(
-      { user: req.user._id, exam: exam._id, subject, topic, language },
+      { user: req.user._id, exam: exam._id, subject: canonSubject, topic: canonTopic, language },
       { $set: fields, $inc: { readCount: 1 } },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );

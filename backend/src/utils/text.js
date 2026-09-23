@@ -23,6 +23,25 @@ const fingerprint = (s = '') =>
     .trim()
     .slice(0, 220);
 
+/**
+ * Comparison key for a syllabus topic or subject label.
+ *
+ * Labels reach us from three places that never agree perfectly: the syllabus
+ * the analyser extracted, the roadmap the planner wrote, and the tags the
+ * question generator attached. "Current Affairs", "current affairs" and
+ * "Current Affairs " are the same topic to a learner, so they must be the same
+ * topic to a lookup. Built on the same unicode-safe filter as `fingerprint`,
+ * for the same reason: an ASCII-only filter would flatten every Odia label to
+ * an empty string and make them all collide.
+ */
+const topicKey = (s = '') =>
+  String(s)
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{N}\p{M}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 /** Clamp long PDF text so a single prompt stays inside a sane token budget. */
 const clampText = (text = '', maxChars = 120000) => {
   const t = String(text).replace(/\u0000/g, '').replace(/[ \t]+/g, ' ');
@@ -43,4 +62,4 @@ const shuffle = (arr) => {
   return a;
 };
 
-module.exports = { slugifyTopic, titleCase, fingerprint, clampText, pct, shuffle };
+module.exports = { slugifyTopic, titleCase, fingerprint, topicKey, clampText, pct, shuffle };

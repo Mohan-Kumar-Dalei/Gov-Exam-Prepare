@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { topicKey } = require('../utils/text.js');
 
 const syllabusSubjectSchema = new mongoose.Schema(
   {
@@ -121,6 +122,71 @@ examSchema.methods.flatTopics = function flatTopics() {
       subtopics: t.subtopics || [],
     })),
   );
+};
+
+/**
+ * Finds the syllabus entry a (subject, topic) pair refers to.
+ *
+ * Topic labels do not all originate here. The syllabus comes from the
+ * notification, but the roadmap planner and the question generator each write
+ * their own labels, and a model asked for "Group-A Common Subjects" will
+ * happily answer "Current Affairs" whether or not that exact string was
+ * extracted. Demanding an exact match turned every such near-miss into a dead
+ * "Revise this topic" button, which is the app refusing to teach something it
+ * put in front of the learner itself.
+ *
+ * Matching therefore widens in stages, most trustworthy first, and reports how
+ * it succeeded so callers can prefer the canonical label.
+ *
+ * @returns {{ entry: object, matchedBy: 'exact'|'normalised'|'subject'|'overlap' }|null}
+ */
+examSchema.methods.resolveTopic = function resolveTopic(subject, topic) {
+  const all = this.flatTopics();
+  if (!topic) return null;
+
+  const wantTopic = topicKey(topic);
+  const wantSubject = topicKey(subject);
+  if (!wantTopic) return null;
+
+  const exact = all.find((t) => t.subject === subject && t.topic === topic);
+  if (exact) return { entry: exact, matchedBy: 'exact' };
+
+  // Case, spacing and punctuation differences only.
+  const normalised = all.find(
+    (t) => topicKey(t.subject) === wantSubject && topicKey(t.topic) === wantTopic,
+  );
+  if (normalised) return { entry: normalised, matchedBy: 'normalised' };
+
+  // Right topic, wrong subject heading — common when a planner regroups the
+  // syllabus under its own section names.
+  const elsewhere = all.find((t) => topicKey(t.topic) === wantTopic);
+  if (elsewhere) return { entry: elsewhere, matchedBy: 'subject' };
+
+  // One label contains the other: "Current Affairs" vs "Current Affairs and
+  // General Knowledge". Short keys are excluded because a two-letter overlap
+  // is coincidence, not a match.
+  if (wantTopic.length >= 5) {
+    const overlapping = all
+      .filter((t) => {
+        const key = topicKey(t.topic);
+        return key.length >= 5 && (key.includes(wantTopic) || wantTopic.includes(key));
+      })
+      // Prefer the same subject, then the closest-length label: against
+      // "Current Affairs", "Current Affairs and GK" beats a catch-all
+      // "General Studies including Current Affairs".
+      .sort((a, b) => {
+        const subjectRank =
+          Number(topicKey(b.subject) === wantSubject) - Number(topicKey(a.subject) === wantSubject);
+        if (subjectRank) return subjectRank;
+        return (
+          Math.abs(topicKey(a.topic).length - wantTopic.length) -
+          Math.abs(topicKey(b.topic).length - wantTopic.length)
+        );
+      })[0];
+    if (overlapping) return { entry: overlapping, matchedBy: 'overlap' };
+  }
+
+  return null;
 };
 
 examSchema.pre('save', function invalidateBlueprint(next) {
