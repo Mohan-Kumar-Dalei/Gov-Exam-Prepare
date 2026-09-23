@@ -27,6 +27,7 @@ import {
   Spinner,
 } from '../components/ui/index.jsx';
 import Markdown from '../components/ui/Markdown.jsx';
+import SourceChips, { NoSourcesNote } from '../components/ui/SourceChips.jsx';
 
 const OLDEST_YEAR = 2010;
 const COUNTS = [10, 15, 25, 40];
@@ -207,26 +208,17 @@ function PaperReader({ paper, onBack, onDelete }) {
             {paper.sourceBasis ? (
               <p className="text-xs leading-relaxed text-ink-500">{paper.sourceBasis}</p>
             ) : null}
-            <p className="text-xs text-ink-500">
-              {paper.grounded
-                ? 'Backed by a web search of the real paper.'
-                : 'Written from the model’s own knowledge — no web search backed this one.'}
-            </p>
             {paper.groundingSources?.length ? (
-              <div className="flex flex-wrap gap-2 pt-1">
-                {paper.groundingSources.map((src) => (
-                  <a
-                    key={src}
-                    href={src}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="max-w-[220px] truncate rounded-md bg-ink-100 px-2 py-0.5 text-[11px] text-ink-600 hover:bg-ink-200"
-                  >
-                    {src.replace(/^https?:\/\//, '')}
-                  </a>
-                ))}
+              <div className="pt-1.5">
+                <SourceChips sources={paper.groundingSources} label="Searched" />
               </div>
-            ) : null}
+            ) : (
+              <NoSourcesNote>
+                {paper.grounded
+                  ? 'A web search ran but named no page it could cite.'
+                  : 'Written from the model’s own knowledge — no web search backed this one.'}
+              </NoSourcesNote>
+            )}
           </div>
         </div>
       </Card>

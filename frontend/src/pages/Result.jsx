@@ -25,6 +25,7 @@ import {
   ProgressBar,
   masteryTone,
 } from '../components/ui/index.jsx';
+import SourceChips from '../components/ui/SourceChips.jsx';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const FILTERS = [
@@ -308,6 +309,17 @@ export default function Result() {
                       <BookOpen size={13} /> Revise this topic
                     </Link>
                   </div>
+
+                  {/* A grounded question was checked against real pages. Naming
+                      them lets the learner verify a fact they doubt, rather
+                      than having to take the explanation on trust. */}
+                  {r.q?.groundingSources?.length ? (
+                    <SourceChips
+                      sources={r.q.groundingSources}
+                      label="Checked against"
+                      className="mt-3"
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
