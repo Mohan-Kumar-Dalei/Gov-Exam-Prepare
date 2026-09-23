@@ -52,6 +52,29 @@ function invalidate(userId) {
 }
 
 /**
+ * Hands an account the keys it added before keys had owners.
+ *
+ * Rows from the shared-ring era carry `addedBy` but no `user`, so a scoped
+ * read cannot see them and their owner is told they have no key. The row
+ * already records who added it, so there is nothing to decide — and only rows
+ * this exact account added are ever touched, so one account can never adopt
+ * another's key. Running it on read means the owner only has to sign in,
+ * rather than someone having to reach a shell on the server.
+ *
+ * @returns {Promise<number>} how many rows were adopted
+ */
+async function adoptLegacyKeys(owner) {
+  const adopted = await ApiKey.updateMany(
+    { user: { $exists: false }, addedBy: owner },
+    { $set: { user: owner } },
+  );
+  if (adopted.modifiedCount) {
+    logger.info(`Adopted ${adopted.modifiedCount} key(s) this account added before keys had owners`);
+  }
+  return adopted.modifiedCount || 0;
+}
+
+/**
  * One owner's keys to try, in order, as `{ id, key, label }`.
  * `id` is null for the environment key, which has no database row.
  *
@@ -67,11 +90,17 @@ async function getUsableKeys({ userId, isAdmin = false, force = false } = {}) {
   const hit = cache.get(owner);
   if (!force && hit && hit.keys.length && now - hit.at < CACHE_MS) return hit.keys;
 
-  let rows = [];
-  try {
-    rows = await ApiKey.find({ user: owner, enabled: true })
+  const read = () =>
+    ApiKey.find({ user: owner, enabled: true })
       .select('+cipherText +iv +tag')
       .sort({ priority: 1, createdAt: 1 });
+
+  let rows = [];
+  try {
+    rows = await read();
+
+    // Nothing visible may just mean the rows predate ownership.
+    if (!rows.length && (await adoptLegacyKeys(owner))) rows = await read();
   } catch (err) {
     // A database hiccup must not take AI down when an env key exists.
     logger.warn(`Could not read the key ring: ${err.message}`);
@@ -206,7 +235,13 @@ async function addKey({ userId, label, key }) {
 }
 
 async function listKeys(userId) {
-  const rows = await ApiKey.find({ user: userId }).sort({ priority: 1, createdAt: 1 });
+  const read = () => ApiKey.find({ user: userId }).sort({ priority: 1, createdAt: 1 });
+
+  let rows = await read();
+  // Same adoption as the read path, so the Settings page shows a key the
+  // moment its owner opens it rather than after some other request ran.
+  if (!rows.length && (await adoptLegacyKeys(userId))) rows = await read();
+
   return rows.map((r) => r.toClient());
 }
 
@@ -257,6 +292,7 @@ const reviveEnvKey = () => {
 module.exports = {
   getUsableKeys,
   countOwnerlessKeys,
+  adoptLegacyKeys,
   envKeyState,
   reviveEnvKey,
   reportFailure,

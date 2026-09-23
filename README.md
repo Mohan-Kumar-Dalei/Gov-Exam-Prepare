@@ -71,9 +71,14 @@ npm run backfill-key-owners -- --apply
 ```
 
 Keys added before the ring became per-account carry no owner, which makes them
-invisible to everyone. This copies `addedBy` into `user`. A key with neither is
-reported rather than guessed at — assigning someone else's key to an account
-would let it spend credits that are not its own.
+invisible to everyone. This copies `addedBy` into `user`.
+
+You usually do not need it: a key is adopted automatically the next time the
+account that added it reads its ring, so signing in is enough. The script is
+for doing every account at once. Either way only rows whose `addedBy` matches
+are touched — a key with neither is reported rather than guessed at, since
+assigning someone else's key to an account would let it spend credits that are
+not its own.
 
 ### One-off: realigning stored topic labels
 

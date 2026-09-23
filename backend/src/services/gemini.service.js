@@ -146,17 +146,15 @@ async function resolveKeys() {
       );
     }
 
+    // A key this account added is adopted automatically on read, so anything
+    // still ownerless here belongs to some other account — one that has not
+    // signed in since, or no longer exists. Worth logging, but it is not this
+    // person's key and not their problem.
     const ownerless = await keyring.countOwnerlessKeys();
     if (ownerless) {
-      // Loud, because the fix is a command on the server rather than anything
-      // the person staring at the screen can do.
-      logger.error(
-        `${ownerless} API key(s) in the database have no owner, so nobody can see them. ` +
-          'Run "npm run backfill-key-owners" in backend/ to hand them back to the accounts that added them.',
-      );
-      throw ApiError.badRequest(
-        'Your API key could not be found. It was stored before keys became per-account, ' +
-          'so it needs to be re-linked on the server — or add it again under Settings → API Key.',
+      logger.warn(
+        `${ownerless} API key(s) still have no owner. They will be adopted when the ` +
+          'account that added each one signs in; "npm run backfill-key-owners" does it in bulk.',
       );
     }
 
