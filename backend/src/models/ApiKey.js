@@ -3,12 +3,24 @@ const mongoose = require('mongoose');
 /**
  * One Gemini API key in the rotation ring.
  *
- * Keys are tried in `priority` order. A key that reports a billing or quota
- * failure is parked — permanently for depleted credits, briefly for a rate
- * limit — so the next request starts on a key that can actually serve it.
+ * Keys belong to the learner who added them. Each account brings its own key
+ * and spends its own quota, so the ring is scoped by `user` everywhere it is
+ * read — an unscoped read would let one account spend another's credits.
+ *
+ * Within an owner's ring, keys are tried in `priority` order. A key that
+ * reports a billing or quota failure is parked — permanently for depleted
+ * credits, briefly for a rate limit — so the next request starts on a key that
+ * can actually serve it.
  */
 const apiKeySchema = new mongoose.Schema(
   {
+    /**
+     * The key's owner. Every learner brings their own key and spends their own
+     * quota, so a key is only ever visible to, and only ever spent by, the
+     * account that added it.
+     */
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+
     label: { type: String, required: true, trim: true, maxlength: 60 },
 
     // Encrypted at rest; the plaintext never leaves the server.
@@ -40,7 +52,7 @@ const apiKeySchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-apiKeySchema.index({ enabled: 1, priority: 1 });
+apiKeySchema.index({ user: 1, enabled: 1, priority: 1 });
 
 /** True when this key is worth trying right now. */
 apiKeySchema.methods.isAvailable = function isAvailable(now = new Date()) {

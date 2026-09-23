@@ -18,6 +18,8 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useAsync } from '../../hooks/useAsync.js';
+import { keyApi } from '../../api/endpoints.js';
 import LanguageSwitcher from './LanguageSwitcher.jsx';
 
 const NAV = [
@@ -30,8 +32,8 @@ const NAV = [
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/roadmap', label: 'Roadmap', icon: CalendarRange },
   { to: '/mentor', label: 'AI Mentor', icon: MessageSquare },
-  // API keys are billing, so this only shows for the owner account.
-  { to: '/settings', label: 'API Keys', icon: KeyRound, adminOnly: true },
+  // Everyone brings their own key, so this is a personal setting.
+  { to: '/settings', label: 'API Key', icon: KeyRound },
 ];
 
 /**
@@ -83,6 +85,51 @@ function NavItems({ onNavigate, isAdmin }) {
         </NavLink>
       ))}
     </nav>
+  );
+}
+
+/**
+ * Prompts an account that has no usable key to add one.
+ *
+ * Every learner brings their own Gemini key, so having none is the normal
+ * first-run state. Without this the first sign of it is a failure part-way
+ * into a lesson or a quiz, which reads as the app being broken rather than as
+ * a step the learner has not taken yet.
+ */
+function NoKeyBanner() {
+  const ring = useAsync(() => keyApi.list(), []);
+  const data = ring.data?.data;
+
+  // Say nothing until we know: a banner that flashes on every page load is
+  // worse than one that appears a moment late.
+  if (ring.loading || ring.error || !data) return null;
+  if (data.usableCount > 0) return null;
+
+  const hasKeys = (data.keys || []).length > 0;
+
+  return (
+    <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+      <KeyRound size={18} className="shrink-0 text-amber-600" />
+      <p className="min-w-0 flex-1 text-sm text-amber-900">
+        {hasKeys ? (
+          <>
+            <strong>None of your API keys can be used right now.</strong> They have run out of
+            quota, or were rejected. AI features stay off until one works again.
+          </>
+        ) : (
+          <>
+            <strong>Add your Gemini API key to switch on the AI features.</strong> This app runs on
+            your own key, so your usage is yours alone. Creating one is free.
+          </>
+        )}
+      </p>
+      <NavLink
+        to="/settings"
+        className="btn-primary shrink-0 justify-center whitespace-nowrap sm:w-auto"
+      >
+        {hasKeys ? 'Check your keys' : 'Add a key'}
+      </NavLink>
+    </div>
   );
 }
 
@@ -193,6 +240,7 @@ export default function AppLayout() {
         </aside>
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8 xl:px-10 2xl:px-14">
+          <NoKeyBanner />
           <Outlet />
         </main>
       </div>

@@ -5,10 +5,16 @@ const logger = require('../utils/logger.js');
 /**
  * The rotation ring for Gemini API keys.
  *
- * Keys added through the UI are tried in priority order. The key from the
- * environment, when present, is always available as a last resort so the app
- * keeps working before anyone has configured the ring — and if every stored
- * key is exhausted.
+ * Every ring belongs to one learner. Each account adds its own keys and spends
+ * its own quota, so every read here is scoped by owner — an unscoped read
+ * would let one account burn another's credits, which is a billing failure
+ * rather than an untidy one. Within an owner's ring, keys are tried in
+ * priority order.
+ *
+ * The environment key is the operator's own, so it is offered only to an admin
+ * account. Handing it to every signed-up learner would spend the operator's
+ * quota silently, and the whole point of the ring is that people bring their
+ * own.
  *
  * Failures are classified rather than treated alike:
  *   402 depleted credits -> park the key until the operator tops it up
@@ -23,7 +29,8 @@ const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** Short cache so a burst of calls does not re-read the collection each time. */
 const CACHE_MS = 5000;
-let cache = { at: 0, keys: [] };
+/** Keyed by owner: one learner's burst must not serve another's keys. */
+const cache = new Map();
 
 /**
  * The environment key has no database row, so its health is parked in memory.
@@ -38,21 +45,31 @@ const envKey = () => (process.env.GEMINI_API_KEY || '').trim();
 
 const envKeyAvailable = () => Boolean(envKey()) && Date.now() >= envState.until;
 
-function invalidate() {
-  cache = { at: 0, keys: [] };
+/** Drops one owner's cached ring, or every owner's when called bare. */
+function invalidate(userId) {
+  if (userId) cache.delete(String(userId));
+  else cache.clear();
 }
 
 /**
- * Keys to try, in order, as `{ id, key, label }`.
+ * One owner's keys to try, in order, as `{ id, key, label }`.
  * `id` is null for the environment key, which has no database row.
+ *
+ * @param {object}  opts
+ * @param {string}  opts.userId  whose ring to read — required
+ * @param {boolean} opts.isAdmin whether the environment key may be offered
  */
-async function getUsableKeys({ force = false } = {}) {
+async function getUsableKeys({ userId, isAdmin = false, force = false } = {}) {
+  if (!userId) return [];
+
+  const owner = String(userId);
   const now = Date.now();
-  if (!force && cache.keys.length && now - cache.at < CACHE_MS) return cache.keys;
+  const hit = cache.get(owner);
+  if (!force && hit && hit.keys.length && now - hit.at < CACHE_MS) return hit.keys;
 
   let rows = [];
   try {
-    rows = await ApiKey.find({ enabled: true })
+    rows = await ApiKey.find({ user: owner, enabled: true })
       .select('+cipherText +iv +tag')
       .sort({ priority: 1, createdAt: 1 });
   } catch (err) {
@@ -75,12 +92,13 @@ async function getUsableKeys({ force = false } = {}) {
     usable.push({ id: String(row._id), key: plain, label: row.label });
   }
 
+  // The operator's own key, offered only to the operator.
   const fromEnv = envKey();
-  if (fromEnv && envKeyAvailable() && !usable.some((k) => k.key === fromEnv)) {
+  if (isAdmin && fromEnv && envKeyAvailable() && !usable.some((k) => k.key === fromEnv)) {
     usable.push({ id: null, key: fromEnv, label: 'GEMINI_API_KEY (env)' });
   }
 
-  cache = { at: now, keys: usable };
+  cache.set(owner, { at: now, keys: usable });
   return usable;
 }
 
@@ -100,7 +118,7 @@ function classify(status, detail = '') {
 }
 
 /** Records a key-attributable failure. Returns true when the key was parked. */
-async function reportFailure(id, status, detail = '') {
+async function reportFailure(id, status, detail = '', userId = null) {
   const verdict = classify(status, detail);
   if (!verdict.parks) return false;
   if (!id) {
@@ -124,7 +142,7 @@ async function reportFailure(id, status, detail = '') {
     },
   ).catch(() => {});
 
-  invalidate();
+  invalidate(userId);
   logger.warn(`API key parked as ${verdict.status}`);
   return true;
 }
@@ -144,47 +162,62 @@ async function reportSuccess(id) {
 /* Management                                                          */
 /* ------------------------------------------------------------------ */
 
-async function addKey({ label, key, addedBy }) {
+/*
+ * Every management call below takes the owner and filters on it. The id alone
+ * is never enough: an id is guessable, and a lookup by id alone would let one
+ * account read, disable or delete another account's key.
+ */
+
+async function addKey({ userId, label, key }) {
   const trimmed = String(key).trim();
-  const last = await ApiKey.findOne().sort({ priority: -1 }).select('priority').lean();
+  const last = await ApiKey.findOne({ user: userId })
+    .sort({ priority: -1 })
+    .select('priority')
+    .lean();
 
   const created = await ApiKey.create({
-    label: label?.trim() || `Key ${(last?.priority ?? 0) + 1}`,
+    user: userId,
+    label: label?.trim() || `Key ${(last?.priority ?? 0) + 2}`,
     ...encrypt(trimmed),
     masked: maskKey(trimmed),
     priority: (last?.priority ?? -1) + 1,
-    addedBy,
+    addedBy: userId,
   });
 
-  invalidate();
+  invalidate(userId);
   return created;
 }
 
-async function listKeys() {
-  const rows = await ApiKey.find().sort({ priority: 1, createdAt: 1 });
+async function listKeys(userId) {
+  const rows = await ApiKey.find({ user: userId }).sort({ priority: 1, createdAt: 1 });
   return rows.map((r) => r.toClient());
 }
 
-async function removeKey(id) {
-  const deleted = await ApiKey.findByIdAndDelete(id);
-  invalidate();
+async function removeKey(id, userId) {
+  const deleted = await ApiKey.findOneAndDelete({ _id: id, user: userId });
+  invalidate(userId);
   return deleted;
 }
 
-async function updateKey(id, patch) {
-  const updated = await ApiKey.findByIdAndUpdate(id, patch, { new: true });
-  invalidate();
+async function updateKey(id, userId, patch) {
+  const updated = await ApiKey.findOneAndUpdate({ _id: id, user: userId }, patch, { new: true });
+  invalidate(userId);
   return updated;
 }
 
-/** Clears a parked status so the operator can retry after topping up. */
-async function reviveKey(id) {
-  return updateKey(id, { status: 'untested', lastError: '', cooldownUntil: null, enabled: true });
+/** Clears a parked status so the owner can retry after topping up. */
+async function reviveKey(id, userId) {
+  return updateKey(id, userId, {
+    status: 'untested',
+    lastError: '',
+    cooldownUntil: null,
+    enabled: true,
+  });
 }
 
 /** Reads one key's plaintext, for the "test this key" action only. */
-async function readPlaintext(id) {
-  const row = await ApiKey.findById(id).select('+cipherText +iv +tag');
+async function readPlaintext(id, userId) {
+  const row = await ApiKey.findOne({ _id: id, user: userId }).select('+cipherText +iv +tag');
   if (!row) return null;
   return decrypt({ cipherText: row.cipherText, iv: row.iv, tag: row.tag });
 }

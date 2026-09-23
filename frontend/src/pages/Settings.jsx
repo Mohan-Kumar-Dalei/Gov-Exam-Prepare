@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { keyApi } from '../api/endpoints.js';
 import { useAsync } from '../hooks/useAsync.js';
-import { useAuth } from '../context/AuthContext.jsx';
 import {
   Card,
   CardHeader,
@@ -35,7 +34,6 @@ const STATUS = {
 };
 
 export default function Settings() {
-  const { user } = useAuth();
   const [label, setLabel] = useState('');
   const [key, setKey] = useState('');
   const [adding, setAdding] = useState(false);
@@ -43,7 +41,6 @@ export default function Settings() {
 
   const ring = useAsync(() => keyApi.list(), []);
 
-  const isAdmin = user?.role === 'admin';
 
   const act = async (id, fn, successMessage) => {
     setBusyId(id);
@@ -97,19 +94,6 @@ export default function Settings() {
     }
   };
 
-  if (!isAdmin) {
-    return (
-      <>
-        <PageHeader title="Settings" />
-        <EmptyState
-          icon={ShieldCheck}
-          title="Admins only"
-          description="API keys control billing for the whole deployment, so only the owner account can manage them."
-        />
-      </>
-    );
-  }
-
   if (ring.loading) {
     return (
       <div className="space-y-4">
@@ -125,8 +109,8 @@ export default function Settings() {
   return (
     <>
       <PageHeader
-        title="API keys"
-        subtitle="Keys are tried in order. One that runs out of credits or hits a rate limit is skipped automatically."
+        title="Your API key"
+        subtitle="AI Exam Coach runs on your own Gemini key, so your usage is yours alone. Add more than one and they are tried in order — a key that runs out of credits or hits a rate limit is skipped automatically."
       />
 
       <div
@@ -324,7 +308,7 @@ export default function Settings() {
               description={
                 envKeyPresent
                   ? 'Your .env key is being used. Add more here so requests can move on when one runs out.'
-                  : 'Add a Gemini API key above to switch on the AI features.'
+                  : 'Add a Gemini API key above to switch on the AI features. Creating one is free at aistudio.google.com.'
               }
             />
           </div>

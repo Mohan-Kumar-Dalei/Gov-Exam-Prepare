@@ -42,6 +42,38 @@ npm run seed
 
 Creates `demo@examcoach.dev` / `demo1234` with a fully populated exam (5 subjects, 19 topics, a seeded question bank and some history) so you can explore the UI before wiring up a Gemini key.
 
+### Bring your own key
+
+AI Exam Coach runs on each learner's own Gemini API key. Every account adds its
+own under **Settings → API Key**, and spends its own quota; a key is only ever
+visible to, and only ever spent by, the account that added it. A learner with
+no usable key sees a prompt to add one rather than a failure part-way into a
+lesson.
+
+`GEMINI_API_KEY` in the environment stays the operator's own. It is offered
+only to an admin account, so signed-up learners cannot silently spend the
+operator's quota.
+
+The key ring resolves its owner from an `AsyncLocalStorage` request context
+bound in `protect`, rather than threading a user id through every AI call —
+analysis, lessons, questions, roadmaps, mock blueprints and mentor chat would
+all have to carry an argument none of them otherwise needs. The store follows
+the async chain, so background work a handler starts and does not await (the
+upload pipeline, the question warm-up) still resolves the right owner's keys.
+
+### One-off: giving existing API keys an owner
+
+```bash
+cd backend
+npm run backfill-key-owners             # dry run
+npm run backfill-key-owners -- --apply
+```
+
+Keys added before the ring became per-account carry no owner, which makes them
+invisible to everyone. This copies `addedBy` into `user`. A key with neither is
+reported rather than guessed at — assigning someone else's key to an account
+would let it spend credits that are not its own.
+
 ### One-off: realigning stored topic labels
 
 ```bash

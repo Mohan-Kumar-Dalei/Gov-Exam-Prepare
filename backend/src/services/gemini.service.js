@@ -28,6 +28,7 @@ const logger = require('../utils/logger.js');
 const ApiError = require('../utils/ApiError.js');
 const { extractJson } = require('../utils/jsonExtract.js');
 const keyring = require('./keyring.service.js');
+const { currentContext } = require('../utils/requestContext.js');
 
 /**
  * Transport for every Gemini call.
@@ -92,22 +93,41 @@ function clientFor(apiKey) {
 /**
  * The keys to try for one request, best first.
  *
- * The ring lives in the database and is managed from the UI; the environment
- * key is appended as a last resort so a fresh install works before anything
- * has been configured.
+ * Each learner brings their own key, so the ring resolved here is the one
+ * belonging to whoever made the request. The owner comes from the request
+ * context rather than a parameter: every function between the route and this
+ * one would otherwise have to carry a user id it has no other use for.
  */
 async function resolveKeys() {
   if (injectedClient) return [{ id: null, key: 'injected', label: 'injected' }];
 
-  const keys = await keyring.getUsableKeys();
-  if (!keys.length) {
+  const ctx = currentContext();
+  if (!ctx?.userId) {
     throw ApiError.internal(
-      'No usable Gemini API key. Add one under Settings, or set GEMINI_API_KEY in backend/.env. ' +
-        'If your keys are parked, they ran out of credits or hit a rate limit.',
+      'No account is associated with this request, so there is no API key to use. ' +
+        'This is a bug — AI calls must run inside an authenticated request.',
+    );
+  }
+
+  const keys = await keyring.getUsableKeys({
+    userId: ctx.userId,
+    isAdmin: ctx.role === 'admin',
+  });
+
+  if (!keys.length) {
+    // Having no key is the normal first-run state here, not a misconfiguration,
+    // so the message points at the thing the learner has to go and do.
+    throw ApiError.badRequest(
+      'You have not added a Gemini API key yet, so AI features cannot run. ' +
+        'Open Settings → API Key and add one — it is free to create at aistudio.google.com. ' +
+        'If you already added a key, it ran out of quota or was rejected; check its status there.',
     );
   }
   return keys;
 }
+
+/** The owner of the current request, for attributing key failures. */
+const currentUserId = () => currentContext()?.userId || null;
 
 /** The SDK reports HTTP status on its ApiError; fall back to duck-typing. */
 const statusOf = (err) => {
@@ -176,7 +196,7 @@ async function uploadFile({ buffer, mimeType = 'application/pdf', displayName = 
       config: { displayName },
     });
   } catch (err) {
-    await keyring.reportFailure(first.id, statusOf(err), detailOf(err));
+    await keyring.reportFailure(first.id, statusOf(err), detailOf(err), currentUserId());
     throw upstreamError(statusOf(err), detailOf(err), GEMINI_MODEL);
   }
 
@@ -443,7 +463,7 @@ async function generate({
         // Billing, quota and bad-key failures belong to the key, not the model.
         const verdict = keyring.classify(status, detail);
         if (verdict.parks) {
-          await keyring.reportFailure(activeKey.id, status, detail);
+          await keyring.reportFailure(activeKey.id, status, detail, currentUserId());
           if (hasAnotherKey) {
             logger.warn(
               `Key "${activeKey.label}" ${verdict.status}; switching to "${keys[ki + 1].label}"`,
@@ -570,7 +590,7 @@ async function* generateStream({
       // Park a key that failed for billing or quota reasons before moving on,
       // so later requests do not start on it again.
       const verdict = keyring.classify(status, detail);
-      if (verdict.parks) await keyring.reportFailure(activeKey.id, status, detail);
+      if (verdict.parks) await keyring.reportFailure(activeKey.id, status, detail, currentUserId());
 
       if (verdict.parks || FALLBACK_WORTHY.has(status) || status === 0) {
         logger.warn(`Stream unavailable on ${model} via "${activeKey.label}" (${status || err.name})`);
@@ -658,9 +678,18 @@ async function generateJson(opts) {
 
 /** True when at least one key is configured — env or ring. */
 async function isConfigured() {
-  if (Boolean(GEMINI_API_KEY)) return true;
+  // Reports whether the CURRENT account can make an AI call. Outside a request
+  // — the health check at boot, for instance — there is no account, so this
+  // answers for the deployment: whether an environment key exists at all.
+  const ctx = currentContext();
+  if (!ctx?.userId) return Boolean(GEMINI_API_KEY);
+
   try {
-    const keys = await keyring.getUsableKeys({ force: true });
+    const keys = await keyring.getUsableKeys({
+      userId: ctx.userId,
+      isAdmin: ctx.role === 'admin',
+      force: true,
+    });
     return keys.length > 0;
   } catch {
     return false;

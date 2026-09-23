@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "seed": "node src/scripts/seed.js",
     "make-admin": "node src/scripts/makeAdmin.js",
-    "snap-topics": "node src/scripts/snapTopics.js"
+    "snap-topics": "node src/scripts/snapTopics.js",
+    "backfill-key-owners": "node src/scripts/backfillKeyOwners.js"
   },
   "engines": {
     "node": ">=18.17"

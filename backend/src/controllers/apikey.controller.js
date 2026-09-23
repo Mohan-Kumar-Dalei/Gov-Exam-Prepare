@@ -5,18 +5,20 @@ const { ok, created } = require('../utils/apiResponse.js');
 const keyring = require('../services/keyring.service.js');
 const logger = require('../utils/logger.js');
 
-/** GET /api/keys — the ring, masked. */
-const listKeys = asyncHandler(async (_req, res) => {
-  const keys = await keyring.listKeys();
-  const fromEnv = keyring.envKey();
+/** GET /api/keys — this account's own ring, masked. */
+const listKeys = asyncHandler(async (req, res) => {
+  const isAdmin = req.user.role === 'admin';
+  const keys = await keyring.listKeys(req.user._id);
 
   return ok(res, {
     keys,
-    // Surfaced so the UI can explain where a working key is coming from — and
-    // why AI is down when the env key is the only one and it is spent.
-    envKeyPresent: Boolean(fromEnv),
-    envKey: keyring.envKeyState(),
-    usableCount: (await keyring.getUsableKeys({ force: true })).length,
+    // The environment key is the operator's own, so only an admin is told it
+    // exists — for anyone else it is neither visible nor spendable.
+    envKeyPresent: isAdmin && Boolean(keyring.envKey()),
+    envKey: isAdmin ? keyring.envKeyState() : null,
+    usableCount: (
+      await keyring.getUsableKeys({ userId: req.user._id, isAdmin, force: true })
+    ).length,
   });
 });
 
@@ -29,13 +31,13 @@ const addKey = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('That does not look like a Gemini API key.');
   }
 
-  const existing = await keyring.listKeys();
+  const existing = await keyring.listKeys(req.user._id);
   if (existing.length >= 10) {
-    throw ApiError.badRequest('The ring holds at most 10 keys. Remove one first.');
+    throw ApiError.badRequest('Your ring holds at most 10 keys. Remove one first.');
   }
 
-  const record = await keyring.addKey({ label, key: trimmed, addedBy: req.user._id });
-  logger.info(`API key "${record.label}" added to the ring`);
+  const record = await keyring.addKey({ userId: req.user._id, label, key: trimmed });
+  logger.info(`API key "${record.label}" added for ${req.user.email}`);
 
   return created(res, { key: record.toClient() }, 'Key added.');
 });
@@ -47,38 +49,43 @@ const updateKey = asyncHandler(async (req, res) => {
   if (req.body.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
   if (req.body.priority !== undefined) patch.priority = Number(req.body.priority);
 
-  const updated = await keyring.updateKey(req.params.id, patch);
+  const updated = await keyring.updateKey(req.params.id, req.user._id, patch);
   if (!updated) throw ApiError.notFound('Key not found.');
 
   return ok(res, { key: updated.toClient() }, 'Key updated.');
 });
 
 /** POST /api/keys/env/revive — clear the environment key's in-memory park. */
-const reviveEnvKey = asyncHandler(async (_req, res) => {
+const reviveEnvKey = asyncHandler(async (req, res) => {
+  // The environment key belongs to the operator, so only the operator may
+  // revive it — it is shared state, unlike everything else on this route.
+  if (req.user.role !== 'admin') {
+    throw ApiError.forbidden('The environment key belongs to the operator.');
+  }
   keyring.reviveEnvKey();
   return ok(res, { envKey: keyring.envKeyState() }, 'Environment key will be tried again.');
 });
 
 /** POST /api/keys/:id/revive — clear a parked status after topping up. */
 const reviveKey = asyncHandler(async (req, res) => {
-  const updated = await keyring.reviveKey(req.params.id);
+  const updated = await keyring.reviveKey(req.params.id, req.user._id);
   if (!updated) throw ApiError.notFound('Key not found.');
   return ok(res, { key: updated.toClient() }, 'Key re-enabled. It will be tried again.');
 });
 
 /** DELETE /api/keys/:id */
 const removeKey = asyncHandler(async (req, res) => {
-  const deleted = await keyring.removeKey(req.params.id);
+  const deleted = await keyring.removeKey(req.params.id, req.user._id);
   if (!deleted) throw ApiError.notFound('Key not found.');
   return ok(res, null, 'Key removed.');
 });
 
 /**
- * POST /api/keys/:id/test — one cheap live call, so the operator learns whether
- * a key works before a learner discovers it does not.
+ * POST /api/keys/:id/test — one cheap live call, so the owner learns whether
+ * their key works before a lesson or quiz discovers it does not.
  */
 const testKey = asyncHandler(async (req, res) => {
-  const plain = await keyring.readPlaintext(req.params.id);
+  const plain = await keyring.readPlaintext(req.params.id, req.user._id);
   if (!plain) throw ApiError.notFound('Key not found, or it could not be decrypted.');
 
   const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -92,7 +99,7 @@ const testKey = asyncHandler(async (req, res) => {
       config: { maxOutputTokens: 16, temperature: 0 },
     });
 
-    const updated = await keyring.updateKey(req.params.id, {
+    const updated = await keyring.updateKey(req.params.id, req.user._id, {
       status: 'ok',
       lastError: '',
       cooldownUntil: null,
@@ -105,7 +112,7 @@ const testKey = asyncHandler(async (req, res) => {
     const detail = String(err?.message || '');
     const verdict = keyring.classify(status, detail);
 
-    const updated = await keyring.updateKey(req.params.id, {
+    const updated = await keyring.updateKey(req.params.id, req.user._id, {
       status: verdict.status || 'untested',
       lastError: detail.slice(0, 300),
       cooldownUntil: verdict.cooldownMs ? new Date(Date.now() + verdict.cooldownMs) : null,

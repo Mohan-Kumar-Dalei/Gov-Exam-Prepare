@@ -4,6 +4,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev_only_insecure_secret_change_me
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev_only_insecure_refresh_change_me';
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
+const { withUserContext } = require('../utils/requestContext.js');
 const ApiError = require('../utils/ApiError.js');
 const asyncHandler = require('../utils/asyncHandler.js');
 const { User } = require('../models/index.js');
@@ -44,7 +45,9 @@ const protect = asyncHandler(async (req, _res, next) => {
   if (!user) throw ApiError.unauthorized('This account no longer exists.');
 
   req.user = user;
-  return next();
+  // Bind the owner to this request so the key ring can resolve their keys
+  // without every AI call having to carry a user id.
+  return withUserContext(req, _res, next);
 });
 
 const restrictTo = (...roles) => (req, _res, next) => {
