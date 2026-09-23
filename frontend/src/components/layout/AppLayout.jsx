@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useAsync } from '../../hooks/useAsync.js';
+import { Spinner } from '../ui/index.jsx';
 import { keyApi } from '../../api/endpoints.js';
 import LanguageSwitcher from './LanguageSwitcher.jsx';
 
@@ -85,6 +86,24 @@ function NavItems({ onNavigate, isAdmin }) {
         </NavLink>
       ))}
     </nav>
+  );
+}
+
+/**
+ * Loading state for a page chunk, shown inside the content area.
+ *
+ * Pages are lazily loaded, and the Suspense boundary used to sit above this
+ * layout — so every first visit to a tab blanked the whole window, sidebar
+ * included, and read as a full page reload. Suspending inside the content
+ * region instead leaves the navigation where it is.
+ */
+function ContentLoader() {
+  return (
+    <div className="grid min-h-[60vh] place-items-center">
+      <span className="flex items-center gap-2 text-sm text-ink-500">
+        <Spinner /> Loading…
+      </span>
+    </div>
   );
 }
 
@@ -216,7 +235,7 @@ export default function AppLayout() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex max-w-[1800px]">
+      <div className="flex">
         {/* Tablet: icons only. Desktop: the full labelled sidebar. */}
         <aside className="sticky top-0 hidden h-screen w-[68px] shrink-0 flex-col items-center gap-4 border-r border-ink-200 bg-white py-4 md:flex lg:hidden">
           <NavLink to="/dashboard" className="grid h-10 w-10 place-items-center rounded-xl bg-brand-600 text-white">
@@ -241,7 +260,11 @@ export default function AppLayout() {
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8 xl:px-10 2xl:px-14">
           <NoKeyBanner />
-          <Outlet />
+          {/* Suspend here, not above the layout, so a tab switch swaps only
+              this region and the sidebar stays put. */}
+          <Suspense fallback={<ContentLoader />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>
