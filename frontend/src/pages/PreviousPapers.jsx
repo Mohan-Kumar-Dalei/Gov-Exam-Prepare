@@ -296,12 +296,12 @@ export default function PreviousPapers() {
     setBuilding(true);
     try {
       const res = await paperApi.build(activeExamId, { year, paperName, count, regenerate });
-      toast.success(res.data.message || 'Paper ready.');
+      toast.success(res.message || 'Paper ready.');
       await list.run();
-      setOpenPaper(res.data.data.paper);
+      setOpenPaper(res.data.paper);
       setFormOpen(false);
     } catch (err) {
-      toast.error(err.response?.data?.message || err.message);
+      toast.error(err.message);
     } finally {
       setBuilding(false);
     }
@@ -310,9 +310,9 @@ export default function PreviousPapers() {
   const open = async (paper) => {
     try {
       const res = await paperApi.get(activeExamId, paper._id);
-      setOpenPaper(res.data.data.paper);
+      setOpenPaper(res.data.paper);
     } catch (err) {
-      toast.error(err.response?.data?.message || err.message);
+      toast.error(err.message);
     }
   };
 
@@ -323,7 +323,7 @@ export default function PreviousPapers() {
       setOpenPaper(null);
       await list.run();
     } catch (err) {
-      toast.error(err.response?.data?.message || err.message);
+      toast.error(err.message);
     }
   };
 
