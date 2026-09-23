@@ -27,7 +27,7 @@ import {
   Spinner,
 } from '../components/ui/index.jsx';
 import Markdown from '../components/ui/Markdown.jsx';
-import SourceChips, { NoSourcesNote, SourceIcon, hostOf } from '../components/ui/SourceChips.jsx';
+import SourceChips, { NoSourcesNote, SourceIcon } from '../components/ui/SourceChips.jsx';
 
 const OLDEST_YEAR = 2010;
 const COUNTS = [10, 15, 25, 40];
@@ -267,44 +267,32 @@ function PaperReader({ paper, onBack, onDelete }) {
 }
 
 /**
- * What the build is doing, while it does it.
+ * What the build is doing, inline beside the button.
  *
  * Building a paper takes about a minute behind a single spinner, and the app
- * was claiming to search the web without ever showing a page. The sources here
- * are the ones the lookup genuinely returned — shown as they arrive, so they
- * answer "which sites?" while the question is still live rather than after the
- * paper lands. An empty list is left visibly empty: inventing sites to fill
- * the wait would undo the point of showing them at all.
+ * was claiming to search the web without ever showing a page it had read. The
+ * icons here are the pages the lookup genuinely returned, shown while the long
+ * call is still running — so "which sites?" gets answered while it is still a
+ * live question rather than after the paper lands.
+ *
+ * A lookup that cites nothing shows nothing. Filling the wait with
+ * plausible-looking sites would invert the whole point of showing sources,
+ * which is that what appears can be trusted and clicked.
  */
 function BuildProgress({ stage, sources, note }) {
   return (
-    <div className="mt-4 rounded-2xl border border-brand-200 bg-brand-50/50 p-4">
-      <p className="flex items-center gap-2 text-sm font-semibold text-brand-800">
-        <Spinner size={15} />
-        {stage || 'Starting…'}
-      </p>
+    <span className="inline-flex min-w-0 items-center gap-2.5 text-sm text-ink-600">
+      <Spinner size={15} />
+      <span className="whitespace-nowrap font-medium">{stage || 'Starting…'}</span>
 
-      {sources === null ? null : sources.length ? (
-        <div className="mt-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
-            Pages it read
-          </p>
-          <ul className="space-y-1">
-            {sources.map((src) => (
-              <li key={src} className="flex items-center gap-2 text-xs text-ink-600">
-                <SourceIcon url={src} size={16} />
-                <span className="min-w-0 flex-1 truncate">{hostOf(src)}</span>
-              </li>
-            ))}
-          </ul>
-          {note ? <p className="mt-2 text-xs leading-relaxed text-ink-500">{note}</p> : null}
-        </div>
-      ) : (
-        <p className="mt-2 text-xs leading-relaxed text-ink-500">
-          {note || 'No page could be cited for this year.'}
-        </p>
-      )}
-    </div>
+      {sources?.length ? (
+        <span className="flex items-center -space-x-1.5" title={note || undefined}>
+          {sources.slice(0, 5).map((src) => (
+            <SourceIcon key={src} url={src} size={18} className="ring-2 ring-white" />
+          ))}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -489,11 +477,10 @@ export default function PreviousPapers() {
             <Button icon={Sparkles} onClick={() => build(false)} disabled={building}>
               {building ? 'Building…' : 'Build paper'}
             </Button>
+            {building ? (
+              <BuildProgress stage={stage} sources={liveSources} note={liveNote} />
+            ) : null}
           </div>
-
-          {building ? (
-            <BuildProgress stage={stage} sources={liveSources} note={liveNote} />
-          ) : null}
         </Card>
       ) : null}
 

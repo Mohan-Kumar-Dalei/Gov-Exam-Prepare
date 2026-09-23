@@ -180,7 +180,8 @@ const buildPaperStream = asyncHandler(async (req, res) => {
   send('start', { year, paperName, count });
 
   try {
-    send('stage', { key: 'searching', label: `Searching the web for the ${year} paper` });
+    // Kept short: this sits inline beside the button, not in a panel.
+    send('stage', { key: 'searching', label: 'Searching the web' });
 
     const found = await findPaperSources({
       examName: exam.examName,
@@ -198,7 +199,7 @@ const buildPaperStream = asyncHandler(async (req, res) => {
       });
     }
 
-    send('stage', { key: 'writing', label: `Writing ${count} questions from what it found` });
+    send('stage', { key: 'writing', label: `Writing ${count} questions` });
 
     const generated = await generatePreviousPaper({
       examName: exam.examName,
