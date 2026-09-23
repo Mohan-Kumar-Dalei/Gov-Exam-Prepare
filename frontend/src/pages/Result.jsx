@@ -127,7 +127,7 @@ export default function Result() {
               <Markdown tone="chat">{feedback.summary}</Markdown>
             </div>
 
-            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+            <div className="mt-5 grid gap-5 sm:grid-cols-2 2xl:grid-cols-3">
               {feedback.strongTopics?.length ? (
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">

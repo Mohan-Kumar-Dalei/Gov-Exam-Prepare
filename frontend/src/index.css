@@ -1,4 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+/*
+ * Inter carries no Odia glyphs, so Odia lessons, questions and mentor replies
+ * fell back to whatever the operating system happened to have — boxes on any
+ * machine without an Odia font installed. Noto Sans Oriya is loaded alongside
+ * it and sits next to Inter in the stack, so each script is drawn by the font
+ * that actually covers it.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Oriya:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;

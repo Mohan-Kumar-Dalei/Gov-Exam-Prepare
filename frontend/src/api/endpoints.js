@@ -136,6 +136,13 @@ export const keyApi = {
   remove: (id) => api.delete(`/keys/${id}`),
 };
 
+export const paperApi = {
+  list: (examId, params) => api.get(`/papers/${examId}`, { params }),
+  get: (examId, paperId) => api.get(`/papers/${examId}/${paperId}`),
+  build: (examId, body) => api.post(`/papers/${examId}`, body),
+  remove: (examId, paperId) => api.delete(`/papers/${examId}/${paperId}`),
+};
+
 export const mentorApi = {
   chat: (body) => api.post('/mentor/chat', body),
 

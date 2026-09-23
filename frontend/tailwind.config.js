@@ -30,7 +30,16 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'sans-serif'],
+        sans: [
+          'Inter',
+          // Covers Odia, which Inter does not.
+          'Noto Sans Oriya',
+          'Kalinga',
+          'ui-sans-serif',
+          'system-ui',
+          'Segoe UI',
+          'sans-serif',
+        ],
       },
       boxShadow: {
         card: '0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.18)',

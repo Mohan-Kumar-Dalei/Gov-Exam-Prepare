@@ -150,7 +150,7 @@ export default function Learn() {
               </button>
 
               {open ? (
-                <div className="grid gap-2 border-t border-ink-100 p-4 sm:grid-cols-2 sm:p-5">
+                <div className="grid gap-2 border-t border-ink-100 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
                   {s.topics.map((t) => (
                     <button
                       key={t.name}

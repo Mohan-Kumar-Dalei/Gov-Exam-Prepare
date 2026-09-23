@@ -9,6 +9,7 @@ const analyticsRoutes = require('./analytics.routes.js');
 const roadmapRoutes = require('./roadmap.routes.js');
 const mentorRoutes = require('./mentor.routes.js');
 const apiKeyRoutes = require('./apikey.routes.js');
+const previousPaperRoutes = require('./previousPaper.routes.js');
 const { isConfigured } = require('../services/gemini.service.js');
 
 
@@ -35,5 +36,6 @@ router.use('/analytics', analyticsRoutes);
 router.use('/roadmap', roadmapRoutes);
 router.use('/mentor', mentorRoutes);
 router.use('/keys', apiKeyRoutes);
+router.use('/papers', previousPaperRoutes);
 
 module.exports = router;

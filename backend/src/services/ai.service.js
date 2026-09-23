@@ -459,6 +459,7 @@ const VALID_TYPES = ['mcq', 'reasoning', 'aptitude', 'gk', 'computer', 'english'
  * batch containing a plausible-sounding fabrication.
  */
 const MIN_FACTUAL_CONFIDENCE = Number(process.env.MIN_FACTUAL_CONFIDENCE || 70);
+const { shapePaper } = require('./previousPaper.helper.js');
 
 /** Subjects where model memory goes stale fastest, so search grounding pays off. */
 const VOLATILE_SUBJECTS = /current affairs|general knowledge|general awareness|gk/i;
@@ -557,6 +558,79 @@ async function generateQuestions({
   }
 
   return trusted;
+}
+
+/**
+ * One previous-year paper, for the revision tab.
+ *
+ * Grounding is requested unconditionally here, unlike practice questions where
+ * it is reserved for volatile topics. A past paper is a real document that
+ * exists on the public web; asking the model to recall one from memory when it
+ * could look it up is how a plausible fabrication gets made. Grounding may
+ * still fail — it draws on its own smaller quota — and the fall back to memory
+ * is honest rather than silent, because the paper records whether search
+ * actually backed it and the UI shows that to the learner.
+ */
+async function generatePreviousPaper({
+  examName,
+  organization,
+  examPattern,
+  syllabus = [],
+  year,
+  paperName = '',
+  count = 25,
+  language = 'en',
+}) {
+  const request = (grounding) =>
+    generateJson({
+      system: P.BRAIN_SYSTEM,
+      prompt: P.previousPaperPrompt({
+        examName,
+        organization,
+        examPattern,
+        syllabus,
+        year,
+        paperName,
+        count,
+        language,
+        grounded: grounding,
+      }),
+      grounding,
+      ...(grounding ? { retries: 1 } : {}),
+      // Low: a past paper is a recall task, not a creative one. Variety here
+      // would mean drifting further from whatever the real paper asked.
+      temperature: 0.3,
+      maxOutputTokens: 32768,
+    });
+
+  let result;
+  let grounded = String(process.env.GEMINI_GROUNDING) === 'true';
+  let sources = [];
+
+  if (grounded) {
+    try {
+      result = await request(true);
+      sources = result.groundingSources || [];
+    } catch (err) {
+      logger.warn(`Grounded past-paper generation failed (${err.message}); falling back to memory`);
+      grounded = false;
+    }
+  }
+
+  if (!result) result = await request(false);
+
+  const { questions, sourceBasis, dropped } = shapePaper(result.data, { year });
+
+  return {
+    year: Number(result.data?.year) || year,
+    paperName: str(result.data?.paperName) || paperName,
+    questions,
+    sourceBasis,
+    dropped,
+    grounded,
+    groundingSources: sources.slice(0, 5),
+    language,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -725,10 +799,11 @@ module.exports = {
   askMentorStream,
   generateLesson,
   generateQuestions,
+  generatePreviousPaper,
   analyzePerformance,
   generateRoadmap,
   generateMockBlueprint,
   predictReadiness,
   askMentor,
 };
-Object.assign(module.exports, { analyzeNotification, transcribePdf, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });
+Object.assign(module.exports, { analyzeNotification, transcribePdf, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, generatePreviousPaper, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });

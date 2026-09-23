@@ -617,6 +617,108 @@ ${JSON.stringify(context, null, 2)}
 --- LEARNER QUESTION ---
 ${question}`;
 
+
+/**
+ * One previous-year paper, for revision.
+ *
+ * The honesty rules here are the whole point. A model asked for "the real 2023
+ * paper" will produce something that looks exactly like one whether or not it
+ * remembers a single question, and a learner revising fabricated questions in
+ * the belief they are the real exam is worse off than one who never opened the
+ * tab. So the model is required to label each question as recalled or
+ * reconstructed and to score its own confidence, and it is told plainly that
+ * admitting reconstruction is the correct answer rather than a failure.
+ */
+const previousPaperPrompt = ({
+  examName,
+  organization = '',
+  year,
+  paperName = '',
+  examPattern = '',
+  syllabus = [],
+  count = 25,
+  language = 'en',
+  grounded = false,
+}) => `Produce a previous-year question paper for revision: "${examName}"${
+  organization ? ` conducted by ${organization}` : ''
+}, year ${year}${paperName ? `, ${paperName}` : ''}.
+
+${languageDirective(language)}
+${
+  grounded
+    ? `
+YOU HAVE GOOGLE SEARCH. Search for this exam's actual ${year} question paper
+before writing anything. Recruitment boards, coaching sites and PDF archives
+publish these. Use what you find. Search again for any fact you are unsure of.
+Do not rely on memory for a paper you can look up.
+`
+    : ''
+}
+
+=== HONESTY — READ THIS BEFORE WRITING ANYTHING ===
+
+You are being asked for a REAL past paper. You probably do not remember it
+question for question, and that is expected. What is NOT acceptable is
+inventing questions and presenting them as the real paper. A learner will
+revise these believing they came from the actual exam.
+
+So label every question honestly using "provenance":
+
+  "recalled"      — you genuinely recognise this question from the actual
+                    ${year} paper of THIS exam. Use this only when you do.
+  "reconstructed" — you do not remember the exact question, so you wrote one
+                    on the same syllabus point, in the same pattern, at the
+                    same difficulty as that paper actually used.
+
+Most questions being "reconstructed" is a GOOD and expected answer. Labelling
+an invented question as "recalled" is the single worst thing you can do here.
+
+Set "factualConfidence" (0-100) per question: how sure you are that the
+question is sound AND the marked answer is correct. Anything you would score
+below 60, discard and replace. A shorter paper of sound questions beats a full
+one containing a confident-sounding error.
+
+=== MATCH THE REAL PAPER ===
+
+${examPattern ? `Exam pattern: ${examPattern}
+` : ''}
+${
+  syllabus.length
+    ? `Draw questions from this exam's syllabus, in roughly the proportions the real paper used:
+${syllabus
+        .map((s) => `- ${s.subject}: ${(s.topics || []).map((t) => t.name || t).join(', ')}`)
+        .join('\n')}`
+    : 'Cover the subjects this exam actually tests, in their usual proportions.'
+}
+
+Match the real paper's question style, phrasing length, number ranges and the
+kind of trap it sets. Never invent a name, date, article number, scheme or
+figure. Prefer settled, examinable facts over volatile ones.
+
+Write ${count} questions, numbered in paper order.
+
+Return EXACTLY this JSON shape:
+{
+  "year": ${year},
+  "paperName": "${paperName || ''}",
+  "sourceBasis": "one sentence: what you based this on, and how much you actually recall of the real paper",
+  "questions": [
+    {
+      "questionNumber": 1,
+      "question": "the full question text, self-contained",
+      "options": ["option A", "option B", "option C", "option D"],
+      "answerIndex": 0,
+      "answer": "the exact text of the correct option",
+      "explanation": "why it is correct, and why the tempting wrong option is wrong",
+      "subject": "the subject this question belongs to",
+      "topic": "the syllabus topic",
+      "marks": 1,
+      "provenance": "recalled" | "reconstructed",
+      "factualConfidence": 0-100
+    }
+  ]
+}`;
+
 module.exports = {
   BRAIN_SYSTEM,
   MENTOR_SYSTEM,
@@ -626,10 +728,11 @@ module.exports = {
   analyzeSyllabusVisionPrompt,
   lessonPrompt,
   questionBatchPrompt,
+  previousPaperPrompt,
   performanceAnalysisPrompt,
   roadmapPrompt,
   mockBlueprintPrompt,
   readinessPrompt,
   mentorContextPrompt,
 };
-Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, transcribePrompt, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });
+Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, transcribePrompt, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, previousPaperPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });

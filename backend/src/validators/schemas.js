@@ -126,6 +126,14 @@ const listQuerySchema = z.object({
 
 const idParamSchema = z.object({ id: objectId });
 
+const previousPaperSchema = z.object({
+  year: z.coerce.number().int().min(2010).max(new Date().getFullYear()),
+  paperName: z.string().trim().max(80).optional().default(''),
+  count: z.coerce.number().int().min(5).max(50).optional().default(25),
+  language: z.string().optional(),
+  regenerate: z.boolean().optional().default(false),
+});
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -139,8 +147,9 @@ module.exports = {
   submitSessionSchema,
   roadmapSchema,
   roadmapDaySchema,
+  previousPaperSchema,
   mentorSchema,
   listQuerySchema,
   idParamSchema,
 };
-Object.assign(module.exports, { signupSchema, loginSchema, refreshSchema, updateProfileSchema, changePasswordSchema, lessonParamsSchema, lessonQuerySchema, startQuizSchema, startMockSchema, submitSessionSchema, roadmapSchema, roadmapDaySchema, mentorSchema, listQuerySchema, idParamSchema });
+Object.assign(module.exports, { signupSchema, loginSchema, refreshSchema, updateProfileSchema, changePasswordSchema, lessonParamsSchema, lessonQuerySchema, startQuizSchema, startMockSchema, submitSessionSchema, roadmapSchema, roadmapDaySchema, previousPaperSchema, mentorSchema, listQuerySchema, idParamSchema });

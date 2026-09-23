@@ -24,6 +24,7 @@ const Result = lazy(() => import('./pages/Result.jsx'));
 const Mock = lazy(() => import('./pages/Mock.jsx'));
 const Analytics = lazy(() => import('./pages/Analytics.jsx'));
 const RoadmapPage = lazy(() => import('./pages/Roadmap.jsx'));
+const PreviousPapers = lazy(() => import('./pages/PreviousPapers.jsx'));
 const Mentor = lazy(() => import('./pages/Mentor.jsx'));
 const Settings = lazy(() => import('./pages/Settings.jsx'));
 const NotFound = lazy(() => import('./pages/NotFound.jsx'));
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/learn/:examId/lesson" element={<Lesson />} />
           <Route path="/practice" element={<Practice />} />
           <Route path="/mock" element={<Mock />} />
+          <Route path="/papers" element={<PreviousPapers />} />
           <Route path="/test/:sessionId" element={<TestRunner />} />
           <Route path="/result/:sessionId" element={<Result />} />
           <Route path="/analytics" element={<Analytics />} />

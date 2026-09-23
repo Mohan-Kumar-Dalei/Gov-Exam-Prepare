@@ -8,5 +8,18 @@ const Lesson = require('./Lesson.js');
 const Roadmap = require('./Roadmap.js');
 const ChatMessage = require('./ChatMessage.js');
 const ApiKey = require('./ApiKey.js');
+const PreviousPaper = require('./PreviousPaper.js');
 
-module.exports = { User, Document, Exam, Question, TestSession, Progress, Lesson, Roadmap, ChatMessage, ApiKey };
+module.exports = {
+  User,
+  Document,
+  Exam,
+  Question,
+  TestSession,
+  Progress,
+  Lesson,
+  Roadmap,
+  ChatMessage,
+  ApiKey,
+  PreviousPaper,
+};

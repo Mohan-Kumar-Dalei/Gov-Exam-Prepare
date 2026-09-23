@@ -286,7 +286,7 @@ export default function Roadmap() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {day.studyTopics?.length ? (
                     <div>
                       <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
