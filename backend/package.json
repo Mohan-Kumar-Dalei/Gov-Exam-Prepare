@@ -2,13 +2,14 @@
   "name": "ai-exam-coach-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "AI Exam Coach — REST API (Express + MongoDB + Gemini 2.5 Flash)",
+  "description": "AI Exam Coach \u2014 REST API (Express + MongoDB + Gemini 2.5 Flash)",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed": "node src/scripts/seed.js",
-    "make-admin": "node src/scripts/makeAdmin.js"
+    "make-admin": "node src/scripts/makeAdmin.js",
+    "snap-topics": "node src/scripts/snapTopics.js"
   },
   "engines": {
     "node": ">=18.17"

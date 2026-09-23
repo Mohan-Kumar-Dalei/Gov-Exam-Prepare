@@ -7,3 +7,6 @@ build/
 .DS_Store
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Migration backups — these contain learner data and must never be committed.
+snap-topics-backup-*.json

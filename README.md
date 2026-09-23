@@ -41,6 +41,27 @@ npm run seed
 
 Creates `demo@examcoach.dev` / `demo1234` with a fully populated exam (5 subjects, 19 topics, a seeded question bank and some history) so you can explore the UI before wiring up a Gemini key.
 
+### One-off: realigning stored topic labels
+
+```bash
+cd backend
+npm run snap-topics             # dry run — reports what would change, writes nothing
+npm run snap-topics -- --apply  # makes the changes, after saving a backup
+```
+
+Topic labels were once written by three authors that never reconciled — the
+notification analyser, the roadmap planner and the question generator — so a
+roadmap day could point at "Current Affairs" while the syllabus said "General
+Awareness and Current Affairs". `Exam.resolveTopic` now bridges that at read
+time and new labels are snapped as they are written, so this script is only
+for rows stored before both. Run the dry run first; it reads and reports only.
+
+It refuses to run without an explicit `MONGO_URI` rather than falling back to
+a local database, writes a `snap-topics-backup-*.json` copy of every document
+it touches (gitignored — it contains learner data), and the only thing it ever
+removes is a duplicate Progress row **after** summing its history into the
+canonical one, so no answered question is lost.
+
 ---
 
 ## Deploying to Render
