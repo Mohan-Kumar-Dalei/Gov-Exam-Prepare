@@ -2,22 +2,37 @@ const { GoogleGenAI, ApiError: GenAIApiError } = require('@google/genai');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-/**
- * Tried in order when the primary model is overloaded or retired.
- *
- * Gemma sits last on purpose. It is free rather than metered, so it is the one
- * model still reachable once a key's paid quota is spent — but it is an open
- * model with no system-instruction field, no JSON response mode, no search
- * grounding and no thinking control, so every request to it is reshaped (see
- * capabilitiesOf) and answers are weaker. It is a floor, not a peer.
- */
+/** Tried in order when the primary model is overloaded or retired. */
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ??
-  'gemini-3.8-flash,gemini-3.7-flash,gemini-3-flash-preview,gemini-3.5-flash,gemma-4-31b-it'
+  'gemini-3.8-flash,gemini-3.7-flash,gemini-3-flash-preview,gemini-3.5-flash'
 )
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
+
+/**
+ * The free model beneath the whole chain, appended to every attempt list.
+ *
+ * Deliberately NOT part of GEMINI_FALLBACK_MODELS. That list is the operator's
+ * preference order, and any deployment that already sets it would silently
+ * drop the free model from the end — removing the one model still reachable
+ * once a key's paid quota is spent, which is precisely when the floor is the
+ * only thing keeping the app alive. A safety net that an unrelated setting can
+ * switch off is not a safety net.
+ *
+ * Gemma is an open model with no system-instruction field, no JSON response
+ * mode, no search grounding and no thinking control, so requests to it are
+ * reshaped (see capabilitiesOf) and its answers are weaker. It is a floor, not
+ * a peer. Set GEMINI_FREE_MODEL to an empty string to remove it.
+ */
+const GEMINI_FREE_MODEL = (process.env.GEMINI_FREE_MODEL ?? 'gemma-4-31b-it').trim();
+
+/** The models to try for one request, best first, free floor last. */
+const modelChain = () =>
+  [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS, GEMINI_FREE_MODEL].filter(
+    (m, i, all) => m && all.indexOf(m) === i,
+  );
 /**
  * How long the model deliberates before answering: minimal | low | medium | high.
  * Output throughput is this app's bottleneck, so short deliberation is the
@@ -115,12 +130,39 @@ async function resolveKeys() {
   });
 
   if (!keys.length) {
-    // Having no key is the normal first-run state here, not a misconfiguration,
-    // so the message points at the thing the learner has to go and do.
+    // "No usable key" has three quite different causes, and telling someone who
+    // just added a key that they have not added one sends them to do the one
+    // thing that will not help. So each case gets its own answer.
+    const mine = await keyring.listKeys(ctx.userId).catch(() => []);
+
+    if (mine.length) {
+      const why = mine.map((k) => `"${k.label}" is ${k.status}`).join('; ');
+      throw ApiError.badRequest(
+        `None of your API keys can be used right now — ${why}. ` +
+          'A key that is exhausted has no credits left: top it up at aistudio.google.com, ' +
+          'or add a key from an account that still has free-tier quota. ' +
+          'A rate-limited key recovers on its own within a few minutes. ' +
+          'Settings → API Key shows the full status and lets you retry one.',
+      );
+    }
+
+    const ownerless = await keyring.countOwnerlessKeys();
+    if (ownerless) {
+      // Loud, because the fix is a command on the server rather than anything
+      // the person staring at the screen can do.
+      logger.error(
+        `${ownerless} API key(s) in the database have no owner, so nobody can see them. ` +
+          'Run "npm run backfill-key-owners" in backend/ to hand them back to the accounts that added them.',
+      );
+      throw ApiError.badRequest(
+        'Your API key could not be found. It was stored before keys became per-account, ' +
+          'so it needs to be re-linked on the server — or add it again under Settings → API Key.',
+      );
+    }
+
     throw ApiError.badRequest(
       'You have not added a Gemini API key yet, so AI features cannot run. ' +
-        'Open Settings → API Key and add one — it is free to create at aistudio.google.com. ' +
-        'If you already added a key, it ran out of quota or was rejected; check its status there.',
+        'Open Settings → API Key and add one — it is free to create at aistudio.google.com.',
     );
   }
   return keys;
@@ -394,9 +436,7 @@ async function generate({
 
   // Capacity spikes hit individual models, not the whole service, so an
   // overloaded primary falls through to the next configured model.
-  const models = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(
-    (m, i, all) => m && all.indexOf(m) === i,
-  );
+  const models = modelChain();
   const keys = await resolveKeys();
 
   let lastError;
@@ -551,9 +591,7 @@ async function* generateStream({
       grounding: false,
     });
 
-  const models = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(
-    (m, i, all) => m && all.indexOf(m) === i,
-  );
+  const models = modelChain();
   const keys = await resolveKeys();
 
   let lastError;

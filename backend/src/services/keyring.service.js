@@ -102,6 +102,23 @@ async function getUsableKeys({ userId, isAdmin = false, force = false } = {}) {
   return usable;
 }
 
+/**
+ * Keys stored before the ring became per-account, so they have no owner.
+ *
+ * Scoped reads cannot see them, which to their owner looks exactly like the
+ * key having vanished. Counted here so the failure can say so instead of
+ * claiming no key was ever added. Read through the driver rather than the
+ * model, because `user` is required on the schema now and a model query would
+ * filter out precisely the rows being looked for.
+ */
+async function countOwnerlessKeys() {
+  try {
+    return await ApiKey.collection.countDocuments({ user: { $exists: false } });
+  } catch {
+    return 0;
+  }
+}
+
 /** Classifies an upstream status into what it means for the key that produced it. */
 function classify(status, detail = '') {
   if (status === 402 || /prepayment credits are depleted|billing/i.test(detail)) {
@@ -239,6 +256,7 @@ const reviveEnvKey = () => {
 
 module.exports = {
   getUsableKeys,
+  countOwnerlessKeys,
   envKeyState,
   reviveEnvKey,
   reportFailure,
