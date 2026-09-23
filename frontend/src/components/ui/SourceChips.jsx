@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Globe, ExternalLink } from 'lucide-react';
+import { Globe, ExternalLink, ChevronRight } from 'lucide-react';
 
 /**
  * The pages a grounded answer actually consulted.
@@ -68,33 +68,39 @@ export default function SourceChips({ sources = [], label = 'Searched', classNam
   const unique = [...new Map(sources.filter(Boolean).map((s) => [hostOf(s), s])).values()];
   if (!unique.length) return null;
 
-  const stack = unique.slice(0, 4);
-  const extra = unique.length - stack.length;
+  // The count beside the icons already carries the total, so the stack is
+  // purely a glance-level cue and does not need an overflow bubble.
+  const stack = unique.slice(0, 3);
 
   return (
     <div className={className}>
+      {/* Deliberately compact: a row of site icons and a count reads as "this
+          was checked" at a glance, and the detail is one tap away for anyone
+          who wants it. The full wording lives on the expanded panel. */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="group inline-flex items-center gap-2 rounded-full border border-ink-200 bg-white py-1 pl-1.5 pr-3 transition-colors hover:border-brand-300 hover:bg-brand-50/50"
+        title={`${label} ${unique.length} ${unique.length === 1 ? 'source' : 'sources'}`}
+        aria-expanded={open}
+        className="group inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white py-1 pl-1.5 pr-2 transition-colors hover:border-brand-300 hover:bg-brand-50/50"
       >
         <span className="flex items-center -space-x-1.5">
           {stack.map((src) => (
             <SourceIcon key={src} url={src} className="ring-2 ring-white" />
           ))}
-          {extra ? (
-            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink-200 text-[9px] font-bold text-ink-600 ring-2 ring-white">
-              +{extra}
-            </span>
-          ) : null}
         </span>
-        <span className="text-xs font-semibold text-ink-600 group-hover:text-brand-700">
-          {label} {unique.length} {unique.length === 1 ? 'source' : 'sources'}
-        </span>
+        <span className="text-xs font-semibold text-ink-700">{unique.length}</span>
+        <ChevronRight
+          size={13}
+          className={`text-ink-400 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
       </button>
 
       {open ? (
         <ul className="mt-2 space-y-1">
+          <li className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+            {label} {unique.length} {unique.length === 1 ? 'source' : 'sources'}
+          </li>
           {unique.map((src) => (
             <li key={src}>
               <a
