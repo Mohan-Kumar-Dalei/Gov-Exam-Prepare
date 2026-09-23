@@ -2,10 +2,18 @@ const { GoogleGenAI, ApiError: GenAIApiError } = require('@google/genai');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-/** Tried in order when the primary model is overloaded or retired. */
+/**
+ * Tried in order when the primary model is overloaded or retired.
+ *
+ * Gemma sits last on purpose. It is free rather than metered, so it is the one
+ * model still reachable once a key's paid quota is spent — but it is an open
+ * model with no system-instruction field, no JSON response mode, no search
+ * grounding and no thinking control, so every request to it is reshaped (see
+ * capabilitiesOf) and answers are weaker. It is a floor, not a peer.
+ */
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ??
-  'gemini-3.8-flash,gemini-3.7-flash,gemini-3-flash-preview,gemini-3.5-flash'
+  'gemini-3.8-flash,gemini-3.7-flash,gemini-3-flash-preview,gemini-3.5-flash,gemma-4-31b-it'
 )
   .split(',')
   .map((m) => m.trim())
@@ -213,7 +221,41 @@ const SAFETY_SETTINGS = [
   'HARM_CATEGORY_DANGEROUS_CONTENT',
 ].map((category) => ({ category, threshold: 'BLOCK_ONLY_HIGH' }));
 
+/**
+ * What a given model will actually accept.
+ *
+ * Gemma is served through the same endpoint as Gemini but is a plainer model:
+ * it rejects a separate system instruction, a pinned JSON response type, server
+ * tools and a thinking budget. Sending any of those turns a working request
+ * into a 400, so the request is shaped per model instead.
+ *
+ * Losing the JSON response type is safe here because `utils/jsonExtract.js`
+ * already recovers JSON from fenced or chatty output — that parser was written
+ * for grounded calls, which have the same restriction.
+ */
+function capabilitiesOf(model) {
+  const isGemma = /^gemma/i.test(model);
+  return {
+    systemInstruction: !isGemma,
+    jsonMimeType: !isGemma,
+    tools: !isGemma,
+    thinking: !isGemma,
+  };
+}
+
+/**
+ * Free models draw on a separate allowance from the metered ones.
+ *
+ * That makes them the one thing still worth trying on a key whose paid quota
+ * is gone — a distinction the fallback chain depends on.
+ */
+const isFreeModel = (model) => /^gemma/i.test(model);
+
+/** Index of the next free model at or after `from`, or -1. */
+const nextFreeModelIndex = (models, from) => models.findIndex((m, i) => i >= from && isFreeModel(m));
+
 function buildRequest({
+  model,
   prompt,
   system,
   json,
@@ -225,6 +267,12 @@ function buildRequest({
   fileUris,
   grounding,
 }) {
+  const can = capabilitiesOf(model);
+
+  // A model with no system-instruction field still needs the instruction, so
+  // it goes in front of the prompt instead of being dropped.
+  const instruction = system && !can.systemInstruction ? `${system}\n\n---\n\n` : '';
+
   // Documents go before the instruction: the model attends to them, then the task.
   const userParts = [
     ...fileUris.map((f) => ({
@@ -233,7 +281,7 @@ function buildRequest({
     ...files.map((f) => ({
       inlineData: { mimeType: f.mimeType || 'application/pdf', data: f.data },
     })),
-    { text: prompt },
+    { text: `${instruction}${prompt}` },
   ];
 
   const contents = [
@@ -247,20 +295,23 @@ function buildRequest({
   // Google Search grounding and a pinned JSON response mime type are mutually
   // exclusive, so a grounded call returns loose text and relies on the parser
   // in utils/jsonExtract.js instead.
-  const pinJsonMime = json && !grounding;
+  const pinJsonMime = json && !grounding && can.jsonMimeType;
+  const useTools = grounding && can.tools;
 
   const config = {
     temperature,
     topP: 0.95,
     maxOutputTokens,
     safetySettings: SAFETY_SETTINGS,
-    ...(system ? { systemInstruction: system } : {}),
+    ...(system && can.systemInstruction ? { systemInstruction: system } : {}),
     ...(pinJsonMime ? { responseMimeType: 'application/json' } : {}),
     ...(pinJsonMime && schema ? { responseSchema: schema } : {}),
-    ...(grounding ? { tools: [{ googleSearch: {} }] } : {}),
+    ...(useTools ? { tools: [{ googleSearch: {} }] } : {}),
     // Flash models reason before answering by default. Output throughput is the
     // bottleneck here, so keep deliberation short unless a caller asks otherwise.
-    ...(GEMINI_THINKING_LEVEL ? { thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL } } : {}),
+    ...(GEMINI_THINKING_LEVEL && can.thinking
+      ? { thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL } }
+      : {}),
   };
 
   return { contents, config };
@@ -304,18 +355,22 @@ async function generate({
   grounding = false,
   retries = 4,
 } = {}) {
-  const { contents, config } = buildRequest({
-    prompt,
-    system,
-    json,
-    schema,
-    temperature,
-    maxOutputTokens,
-    history,
-    files,
-    fileUris,
-    grounding,
-  });
+  // The request is shaped per model — Gemma and Gemini accept different
+  // fields — so it is built inside the loop rather than once up front.
+  const requestFor = (model) =>
+    buildRequest({
+      model,
+      prompt,
+      system,
+      json,
+      schema,
+      temperature,
+      maxOutputTokens,
+      history,
+      files,
+      fileUris,
+      grounding,
+    });
 
   // Capacity spikes hit individual models, not the whole service, so an
   // overloaded primary falls through to the next configured model.
@@ -343,6 +398,7 @@ async function generate({
 
     for (let attempt = 0; attempt < maxAttempts && !tryNextModel && !tryNextKey; attempt += 1) {
       try {
+        const { contents, config } = requestFor(model);
         const res = await ai.models.generateContent({ model, contents, config });
 
         const candidate = res.candidates?.[0];
@@ -393,6 +449,21 @@ async function generate({
               `Key "${activeKey.label}" ${verdict.status}; switching to "${keys[ki + 1].label}"`,
             );
             tryNextKey = true;
+            continue;
+          }
+
+          // No key left with metered quota. A free model bills against a
+          // different allowance, so it is still reachable on this same key —
+          // and it is the only thing standing between the learner and a dead
+          // app once their quota runs out. Credentials that are simply invalid
+          // are excluded: nothing on that key will answer.
+          const freeIdx = verdict.status === 'invalid' ? -1 : nextFreeModelIndex(models, mi + 1);
+          if (freeIdx !== -1) {
+            logger.warn(
+              `Key "${activeKey.label}" ${verdict.status}; dropping to the free model ${models[freeIdx]}`,
+            );
+            mi = freeIdx - 1; // the loop's own increment lands on freeIdx
+            tryNextModel = true;
             continue;
           }
           throw lastError;
@@ -446,17 +517,19 @@ async function* generateStream({
   maxOutputTokens = 4096,
   history = [],
 } = {}) {
-  const { contents, config } = buildRequest({
-    prompt,
-    system,
-    json: false,
-    temperature,
-    maxOutputTokens,
-    history,
-    files: [],
-    fileUris: [],
-    grounding: false,
-  });
+  const requestFor = (model) =>
+    buildRequest({
+      model,
+      prompt,
+      system,
+      json: false,
+      temperature,
+      maxOutputTokens,
+      history,
+      files: [],
+      fileUris: [],
+      grounding: false,
+    });
 
   const models = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(
     (m, i, all) => m && all.indexOf(m) === i,
@@ -473,6 +546,7 @@ async function* generateStream({
     const ai = clientFor(activeKey.key);
     let emitted = false;
     try {
+      const { contents, config } = requestFor(model);
       const stream = await ai.models.generateContentStream({ model, contents, config });
 
       for await (const chunk of stream) {
@@ -618,6 +692,7 @@ const setClientFactory = (factory) => {
 };
 
 module.exports = {
+  capabilitiesOf,
   generate,
   generateStream,
   generateJson,
@@ -628,4 +703,4 @@ module.exports = {
   setClient,
   setClientFactory,
 };
-Object.assign(module.exports, { isConfigured, resetClient, setClient, setClientFactory, uploadFile, deleteFile, generate, generateStream, generateJson });
+Object.assign(module.exports, { capabilitiesOf, isConfigured, resetClient, setClient, setClientFactory, uploadFile, deleteFile, generate, generateStream, generateJson });
