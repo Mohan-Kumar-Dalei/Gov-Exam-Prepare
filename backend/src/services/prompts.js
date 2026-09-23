@@ -719,6 +719,29 @@ Return EXACTLY this JSON shape:
   ]
 }`;
 
+
+/**
+ * A short grounded lookup that only finds where a past paper is published.
+ *
+ * Its real product is the grounding metadata, not the text. Generating the
+ * paper is one long call whose sources only arrive with the finished answer,
+ * so nothing can be shown while the learner waits. Asking first, briefly,
+ * where the paper lives returns real pages in a couple of seconds — which is
+ * what makes it possible to show the research happening instead of claiming
+ * afterwards that it happened.
+ */
+const findPaperSourcesPrompt = ({ examName, organization = '', year, paperName = '' }) =>
+  `Search the web for the actual question paper of "${examName}"${
+    organization ? ` conducted by ${organization}` : ''
+  }, year ${year}${paperName ? `, ${paperName}` : ''}.
+
+Use Google Search. Look for the recruitment board's own site, question-paper
+archives, and coaching sites that publish past papers for this exam.
+
+Then reply with two or three plain sentences: what you found, and how complete
+it looks. No JSON, no lists, no markdown. Keep it under 60 words — the pages
+you consulted matter here, not the prose.`;
+
 module.exports = {
   BRAIN_SYSTEM,
   MENTOR_SYSTEM,
@@ -729,10 +752,11 @@ module.exports = {
   lessonPrompt,
   questionBatchPrompt,
   previousPaperPrompt,
+  findPaperSourcesPrompt,
   performanceAnalysisPrompt,
   roadmapPrompt,
   mockBlueprintPrompt,
   readinessPrompt,
   mentorContextPrompt,
 };
-Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, transcribePrompt, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, previousPaperPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });
+Object.assign(module.exports, { TUTOR_PROSE_SYSTEM, BRAIN_SYSTEM, transcribePrompt, analyzeNotificationPrompt, analyzeIdentityVisionPrompt, analyzeSyllabusVisionPrompt, lessonPrompt, lessonExplanationPrompt, lessonStructurePrompt, questionBatchPrompt, previousPaperPrompt, findPaperSourcesPrompt, performanceAnalysisPrompt, roadmapPrompt, mockBlueprintPrompt, readinessPrompt, MENTOR_SYSTEM, MENTOR_STREAM_SYSTEM, mentorContextPrompt });

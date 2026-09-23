@@ -561,6 +561,43 @@ async function generateQuestions({
 }
 
 /**
+ * Finds where a past paper is published, and returns the pages it consulted.
+ *
+ * This exists for its grounding metadata, not its text. Generating a paper is
+ * one long call whose sources only arrive with the finished answer, so there
+ * is nothing to show while the learner waits — and a progress display that
+ * invents sites would be worse than none. A short grounded lookup answers in
+ * a couple of seconds with real pages, which is what makes it possible to show
+ * the research as it happens rather than assert afterwards that it happened.
+ *
+ * Best-effort by design: it is a nicety on top of the paper, so a failure here
+ * returns nothing and the paper is still generated.
+ *
+ * @returns {Promise<{ sources: string[], note: string }>}
+ */
+async function findPaperSources({ examName, organization, year, paperName = '' }) {
+  if (String(process.env.GEMINI_GROUNDING) !== 'true') return { sources: [], note: '' };
+
+  try {
+    const res = await generate({
+      system: P.TUTOR_PROSE_SYSTEM,
+      prompt: P.findPaperSourcesPrompt({ examName, organization, year, paperName }),
+      grounding: true,
+      retries: 1,
+      temperature: 0.2,
+      // Small: the prose is a by-product, and a long answer only delays the
+      // sources this call exists to produce.
+      maxOutputTokens: 256,
+    });
+
+    return { sources: res.groundingSources || [], note: (res.text || '').trim() };
+  } catch (err) {
+    logger.warn(`Could not look up sources for the ${year} paper: ${err.message}`);
+    return { sources: [], note: '' };
+  }
+}
+
+/**
  * One previous-year paper, for the revision tab.
  *
  * Grounding is requested unconditionally here, unlike practice questions where
@@ -800,10 +837,11 @@ module.exports = {
   generateLesson,
   generateQuestions,
   generatePreviousPaper,
+  findPaperSources,
   analyzePerformance,
   generateRoadmap,
   generateMockBlueprint,
   predictReadiness,
   askMentor,
 };
-Object.assign(module.exports, { analyzeNotification, transcribePdf, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, generatePreviousPaper, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });
+Object.assign(module.exports, { analyzeNotification, transcribePdf, unwrapProse, generateLessonStreamed, generateLesson, generateQuestions, generatePreviousPaper, findPaperSources, analyzePerformance, generateRoadmap, generateMockBlueprint, predictReadiness, askMentorStream, askMentor });

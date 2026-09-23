@@ -18,7 +18,7 @@ import { Globe, ExternalLink, ChevronRight } from 'lucide-react';
  * blocked or missing icon never leaves a broken image behind.
  */
 
-const hostOf = (url) => {
+export const hostOf = (url) => {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -29,7 +29,7 @@ const hostOf = (url) => {
 const faviconFor = (url) =>
   `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(hostOf(url))}`;
 
-function SourceIcon({ url, size = 20, className = '' }) {
+export function SourceIcon({ url, size = 20, className = '' }) {
   const [failed, setFailed] = useState(false);
   const host = hostOf(url);
 

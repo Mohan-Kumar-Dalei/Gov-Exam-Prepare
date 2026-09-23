@@ -3,7 +3,7 @@ const ApiError = require('../utils/ApiError.js');
 const { ok, created } = require('../utils/apiResponse.js');
 const { PreviousPaper } = require('../models/index.js');
 const { loadOwnedExam } = require('./exam.controller.js');
-const { generatePreviousPaper } = require('../services/ai.service.js');
+const { generatePreviousPaper, findPaperSources } = require('../services/ai.service.js');
 const { normaliseLanguage } = require('../config/languages.js');
 const logger = require('../utils/logger.js');
 
@@ -146,6 +146,106 @@ const buildPaper = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * POST /api/papers/:examId/stream — Server-Sent Events.
+ *
+ * Same work as buildPaper, narrated. A paper takes a minute to write and the
+ * learner was watching a spinner with nothing behind it; worse, the app was
+ * claiming to search the web without ever showing a single page. The lookup
+ * runs first precisely so real sources can be shown while the long call is
+ * still going, rather than arriving with the finished paper when they no
+ * longer answer anything.
+ */
+const buildPaperStream = asyncHandler(async (req, res) => {
+  const exam = await loadOwnedExam(req.user._id, req.params.examId);
+  const language = normaliseLanguage(req.body.language, req.user.preferences?.language);
+
+  const year = Number(req.body.year);
+  const thisYear = new Date().getFullYear();
+  if (!Number.isInteger(year) || year < OLDEST_YEAR || year > thisYear) {
+    throw ApiError.badRequest(`Pick a year between ${OLDEST_YEAR} and ${thisYear}.`);
+  }
+
+  const paperName = String(req.body.paperName || '').trim();
+  const count = Math.min(50, Math.max(5, Number(req.body.count) || 25));
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  send('start', { year, paperName, count });
+
+  try {
+    send('stage', { key: 'searching', label: `Searching the web for the ${year} paper` });
+
+    const found = await findPaperSources({
+      examName: exam.examName,
+      organization: exam.organization,
+      year,
+      paperName,
+    });
+
+    if (found.sources.length) {
+      send('sources', { sources: found.sources, note: found.note });
+    } else {
+      send('sources', {
+        sources: [],
+        note: 'No page could be cited — the questions will come from the model’s own knowledge.',
+      });
+    }
+
+    send('stage', { key: 'writing', label: `Writing ${count} questions from what it found` });
+
+    const generated = await generatePreviousPaper({
+      examName: exam.examName,
+      organization: exam.organization,
+      examPattern: exam.examPattern,
+      syllabus: exam.syllabus,
+      year,
+      paperName,
+      count,
+      language,
+    });
+
+    if (!generated.questions.length) {
+      send('error', {
+        message:
+          `No question from the ${year} paper met the confidence bar, so nothing was saved. ` +
+          'Try a different year, or one closer to the present.',
+      });
+      return res.end();
+    }
+
+    // The lookup's pages were genuinely consulted too, so they belong on the
+    // paper alongside whatever the generation itself cited.
+    const sources = [...new Set([...found.sources, ...generated.groundingSources])].slice(0, 8);
+
+    const paper = await PreviousPaper.findOneAndUpdate(
+      { user: req.user._id, exam: exam._id, year, paperName, language },
+      {
+        $set: {
+          questions: generated.questions,
+          sourceBasis: generated.sourceBasis,
+          grounded: generated.grounded || found.sources.length > 0,
+          groundingSources: sources,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+
+    send('done', { paper, dropped: generated.dropped });
+  } catch (err) {
+    logger.error('Paper stream failed', err.message);
+    send('error', { message: err.message });
+  }
+
+  return res.end();
+});
+
 /** DELETE /api/papers/:examId/:paperId */
 const deletePaper = asyncHandler(async (req, res) => {
   const exam = await loadOwnedExam(req.user._id, req.params.examId);
@@ -160,5 +260,5 @@ const deletePaper = asyncHandler(async (req, res) => {
   return ok(res, null, 'Paper deleted.');
 });
 
-module.exports = { listPapers, getPaper, buildPaper, deletePaper, OLDEST_YEAR };
-Object.assign(module.exports, { listPapers, getPaper, buildPaper, deletePaper, OLDEST_YEAR });
+module.exports = { listPapers, getPaper, buildPaper, buildPaperStream, deletePaper, OLDEST_YEAR };
+Object.assign(module.exports, { listPapers, getPaper, buildPaper, buildPaperStream, deletePaper, OLDEST_YEAR });

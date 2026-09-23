@@ -140,6 +140,16 @@ export const paperApi = {
   list: (examId, params) => api.get(`/papers/${examId}`, { params }),
   get: (examId, paperId) => api.get(`/papers/${examId}/${paperId}`),
   build: (examId, body) => api.post(`/papers/${examId}`, body),
+
+  /** Streams the build: stage labels, then the pages it found, then the paper. */
+  buildStream: (examId, body, onEvent, signal) =>
+    readSse({
+      url: `${api.defaults.baseURL}/papers/${examId}/stream`,
+      method: 'POST',
+      body,
+      onEvent,
+      signal,
+    }),
   remove: (examId, paperId) => api.delete(`/papers/${examId}/${paperId}`),
 };
 

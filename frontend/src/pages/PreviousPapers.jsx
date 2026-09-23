@@ -27,7 +27,7 @@ import {
   Spinner,
 } from '../components/ui/index.jsx';
 import Markdown from '../components/ui/Markdown.jsx';
-import SourceChips, { NoSourcesNote } from '../components/ui/SourceChips.jsx';
+import SourceChips, { NoSourcesNote, SourceIcon, hostOf } from '../components/ui/SourceChips.jsx';
 
 const OLDEST_YEAR = 2010;
 const COUNTS = [10, 15, 25, 40];
@@ -266,6 +266,48 @@ function PaperReader({ paper, onBack, onDelete }) {
   );
 }
 
+/**
+ * What the build is doing, while it does it.
+ *
+ * Building a paper takes about a minute behind a single spinner, and the app
+ * was claiming to search the web without ever showing a page. The sources here
+ * are the ones the lookup genuinely returned — shown as they arrive, so they
+ * answer "which sites?" while the question is still live rather than after the
+ * paper lands. An empty list is left visibly empty: inventing sites to fill
+ * the wait would undo the point of showing them at all.
+ */
+function BuildProgress({ stage, sources, note }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-brand-200 bg-brand-50/50 p-4">
+      <p className="flex items-center gap-2 text-sm font-semibold text-brand-800">
+        <Spinner size={15} />
+        {stage || 'Starting…'}
+      </p>
+
+      {sources === null ? null : sources.length ? (
+        <div className="mt-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
+            Pages it read
+          </p>
+          <ul className="space-y-1">
+            {sources.map((src) => (
+              <li key={src} className="flex items-center gap-2 text-xs text-ink-600">
+                <SourceIcon url={src} size={16} />
+                <span className="min-w-0 flex-1 truncate">{hostOf(src)}</span>
+              </li>
+            ))}
+          </ul>
+          {note ? <p className="mt-2 text-xs leading-relaxed text-ink-500">{note}</p> : null}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs leading-relaxed text-ink-500">
+          {note || 'No page could be cited for this year.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function PreviousPapers() {
   const { activeExamId } = useAuth();
 
@@ -273,6 +315,10 @@ export default function PreviousPapers() {
   const [paperName, setPaperName] = useState('');
   const [count, setCount] = useState(25);
   const [building, setBuilding] = useState(false);
+  const [stage, setStage] = useState('');
+  // null = nothing reported yet; [] = the lookup ran and cited nothing.
+  const [liveSources, setLiveSources] = useState(null);
+  const [liveNote, setLiveNote] = useState('');
   const [openPaper, setOpenPaper] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
 
@@ -286,16 +332,42 @@ export default function PreviousPapers() {
 
   const build = async (regenerate = false) => {
     setBuilding(true);
+    setStage('');
+    setLiveSources(null);
+    setLiveNote('');
+
+    let built = null;
+    let failure = null;
+
     try {
-      const res = await paperApi.build(activeExamId, { year, paperName, count, regenerate });
-      toast.success(res.message || 'Paper ready.');
+      await paperApi.buildStream(
+        activeExamId,
+        { year, paperName, count, regenerate },
+        (event, data) => {
+          if (event === 'stage') setStage(data.label);
+          if (event === 'sources') {
+            setLiveSources(data.sources || []);
+            setLiveNote(data.note || '');
+          }
+          if (event === 'done') built = data.paper;
+          // The server reports a failed build as an event, not a dead stream,
+          // so it has to be carried out rather than thrown from in here.
+          if (event === 'error') failure = data.message;
+        },
+      );
+
+      if (failure) throw new Error(failure);
+      if (!built) throw new Error('The build ended without returning a paper.');
+
+      toast.success('Paper ready.');
       await list.run();
-      setOpenPaper(res.data.paper);
+      setOpenPaper(built);
       setFormOpen(false);
     } catch (err) {
       toast.error(err.message);
     } finally {
       setBuilding(false);
+      setStage('');
     }
   };
 
@@ -417,13 +489,11 @@ export default function PreviousPapers() {
             <Button icon={Sparkles} onClick={() => build(false)} disabled={building}>
               {building ? 'Building…' : 'Build paper'}
             </Button>
-            {building ? (
-              <span className="inline-flex items-center gap-2 text-sm text-ink-500">
-                <Spinner size={15} />
-                Searching for the real paper — this takes a minute.
-              </span>
-            ) : null}
           </div>
+
+          {building ? (
+            <BuildProgress stage={stage} sources={liveSources} note={liveNote} />
+          ) : null}
         </Card>
       ) : null}
 

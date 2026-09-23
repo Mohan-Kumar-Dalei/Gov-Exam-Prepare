@@ -11,6 +11,8 @@ router.use(protect);
 router.get('/:examId', ctrl.listPapers);
 router.get('/:examId/:paperId', ctrl.getPaper);
 router.post('/:examId', aiLimiter, validate(previousPaperSchema), ctrl.buildPaper);
+// Declared before ':paperId' so 'stream' is not mistaken for an id.
+router.post('/:examId/stream', aiLimiter, validate(previousPaperSchema), ctrl.buildPaperStream);
 router.delete('/:examId/:paperId', ctrl.deletePaper);
 
 module.exports = router;
